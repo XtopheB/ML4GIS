@@ -60,6 +60,7 @@ GISfiles <- list.files(path = "Data/GIS/",
                       pattern = "*.tiff", full.names=TRUE)
 
 length(GISfiles)
+GISfiles
   
 ```
 
@@ -86,10 +87,11 @@ plot(SentinelData1,
 # create raster stack
 # Use (https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r)
 
-FullStack <- stack(GISfiles[1:7])
+FullStack <- stack(GISfiles[1:8])
 FullStack
                    
 ```
+Next, we read in the different bands that comprise the satellite imagery. Each band refers to a different spectrum:
 
 ```{r}
 # plot stack
@@ -97,14 +99,46 @@ plot(FullStack)
 ```
 
 ```{r}
-plotRGB(FullStack,r=1,g=2,b=3, stretch = "lin")
+# plotRGB(FullStack,r=4,g=3,b=2, stretch = "lin")
+
+#EVI 
+plot(raster(GISfiles[4]))
+
 ```
 
 
-# Extracting directly from Copenicus
+```{r}
+# TRUE color
+plot(raster(GISfiles[8]))
+```
+```{r}
+#Moisture
+plot(raster(GISfiles[4]))
+```
+You’ll notice that the range of values for each raster varies:
+```{r}
+res(raster(GISfiles[4]))
+```
+In total in our full stack, we have a lot of different bands
 
 ```{r}
-devtools::install_github("16EAGLE/getSpatialData")
+nlayers(FullStack)
+```
+```{r}
+crs(FullStack)
+```
+
+
+```{r}
+
+```
+
+
+
+# Extracting directly from Copenicus (Not really working)
+
+```{r}
+# devtools::install_github("16EAGLE/getSpatialData")
 
 library(getSpatialData)
 ```
@@ -113,13 +147,23 @@ library(getSpatialData)
 ### Area of interest
 
 ```{r}
-aoi <- matrix(data = c(22.85, 45.93,  # Upper left corner
+myaoi <- matrix(data = c(22.85, 45.93,  # Upper left corner
                        22.95, 45.93,  # Upper right corner
                        22.95, 45.85,  # Bottom right corner
                        22.85, 45.85,  # Bottom left corner
                        22.85, 45.93), # Upper left corner - closure
               ncol = 2, byrow = TRUE)
-set_aoi(aoi)
+#set_aoi(myaoi)
+Vanuatu_aoi <- matrix(data = c(166, -13,  # Upper left corner
+                               170, -13,  # Upper right corner
+                               170, -20,  # Bottom right corner
+                               166, -20,  # Bottom left corner
+                               166, -13), # Upper left corner - closure
+              ncol = 2, byrow = TRUE)
+
+ set_aoi(Vanuatu_aoi)
+
+
 
 ```
 
@@ -136,13 +180,15 @@ Sproducts <- get_products("sentinel")
 
 ```{r}
 # Set the archive directory (where the raw data will be downloaded)
-set_archive("./data")
+# set_archive("./data")
 ```
 
 ```{r}
 
-records <- getSentinel_records(time_range = c("2021-05-15", "2021-05-30"), 
-                               products = "sentinel-2" )
+# product_names <- getSentinel_products()
+# product_names
+# records <- getSentinel_records(time_range = c("2021-05-15", "2021-05-30"), 
+                               # products = product_names[6] )
                                            
                           
 ```
