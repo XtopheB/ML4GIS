@@ -1,0 +1,190 @@
+---
+title: "Radiant Earth code converted "
+author: "Christophe Bontemps"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: true
+    keep_md: no
+    code_folding: show
+    fig_width: 6.5
+    fig_height: 4
+  pdf_document:
+    df_print: kable
+    toc: yes
+    keep_tex: yes
+    fig_width: 6.5
+    fig_height: 4
+    extra_dependencies: ["float"]
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Knitr_Global_Options, include=FALSE, cache=FALSE}
+library(knitr)
+opts_chunk$set(warning = FALSE, message = FALSE, 
+               fig.pos = "!H", fig.align = "center",
+               autodep = TRUE, tidy = FALSE, cache = TRUE)
+#opts_chunk$set(cache.rebuild=TRUE) 
+
+# My colors:
+SIAP.color <- "#0385a8"
+```
+
+# Raw data processing
+
+## Importing the data
+We also create a unique id which has been described in the report. Its purpose is to carry out the fixing of missing coordinates by making sure each row is unique; hence can be worked on.
+
+```{r}
+library(readxl)
+library(sf)
+library(dplyr)
+```
+
+
+```{r}
+# Input data
+measure <- read_excel("Data/5. sample_plot_measurements.xlsx")
+measure$unique_id <- 1:nrow(measure)
+head(measure)
+
+```
+
+# Cleaning 
+
+```{r}
+# Select columns. cluster_cluster_id is not that important though
+columns <- c(
+  "unique_id",
+  "cluster_cluster_id",
+  "vegetation_type_l2",
+  "general_information_coordinate_of_the_center_x",
+  "general_information_coordinate_of_the_center_y"
+)
+
+
+# Remove columns containing missing values
+values <- measure[complete.cases(measure), columns]
+
+# Rename columns for convenience
+# Note that X and Y are around the wrong way...
+names(values) <- c("unique_id", "id", "class", "x", "y")
+values$y <- -1 * values$y
+head(values)
+
+```
+
+## Standardizing the data 
+
+```{r, eval = FALSE}
+
+### Doesn't work!!!!
+
+# Create sf object
+sf_obj <- st_as_sf(values, coords = c("x", "y"), crs = 4326)
+
+# Filter bounding box to Vanuatu and environs
+bbox <- c(157.107, -20.227, 169.8867, -13.796)
+sf_obj <- sf_obj[st_within(sf_obj, st_bbox(c(bbox[1], bbox[3], bbox[2], bbox[4]))), ]
+nrow(sf_obj)
+plot(sf_obj)
+
+```
+
+
+```{r}
+
+```
+
+# Satelite Data Extraction
+
+We use the package `sentinel2` from {https://github.com/IVFL-BOKU/sentinel2}
+
+
+```{r}
+# If you don't have it yet, install 'devtools':
+# install.packages('devtools')
+devtools::install_github('IVFL-BOKU/sentinel2', force = TRUE)
+
+```
+```{r}
+# GISziggypop1!
+
+library(sentinel2)
+
+S2_initialize_user(user = 'christophe.bontemps@un.org', password = 'GISziggypop1!')
+S2_check_access()
+  
+
+```
+```{r}
+ # see also here
+https://gisgeography.com/how-to-download-sentinel-satellite-data/
+  
+```
+
+
+```{r}
+S2_put_ROI(geometry    = c(x=17.65, y=168.41),
+           regionId    = 'Vanuatu', 
+           cloudCovMax = 20, 
+           dateMin     = '2020-06-01', 
+           dateMax     = '2020-06-10')
+```
+
+
+
+```{r}
+# Load required libraries
+library(sf)
+library(httr)
+
+# Define bounding box coordinates
+bbox <- c(157.107, -20.227, 169.8867, -13.796)
+
+# Define function to extract satellite image data
+extract_satellite_image_data <- function(bbox) {
+  # Create URL for AWS Earth Search API
+  url <- "https://earth-search.aws.element84.com/v1/"
+  
+  # Define JSON body
+  body <- list(
+    collections = list("sentinel-2-l2a"),
+    datetime = "2021-07-08/2021-07-22",
+    bbox = bbox,
+    query = list("eo:cloud_cover" = list("lt" = 30))
+  )
+  
+  # Perform POST request
+  response <- httr::GET(url, body = body, encode = "json")
+  
+  # Check if response is successful
+  if (httr::http_status(response)$category == "Success") {
+    # Extract data from response
+    data <- httr::content(response, "parsed")
+    
+    # Print number of items found
+    print(paste("Found", length(data$features), "items"))
+    
+    # Return items
+    return(data$features)
+  } else {
+    # Print error message
+    print("Error: Failed to retrieve data.")
+    return(NULL)
+  }
+}
+
+# Extract satellite image data
+items <- extract_satellite_image_data(bbox)
+
+```
+
+
