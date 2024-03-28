@@ -132,6 +132,24 @@ You’ll notice that the range of values for each raster varies:
 ```{r}
 res(raster(GISfiles[4]))
 ```
+
+### Creating differences or indexes
+It can be useful and informative to create new raster image by combining (subtracting, dividing) several images. 
+For illustration purpose (this index has no meaning), let's create the followwing index
+
+$$
+
+Myindex  = \frac{Band_4 - Band_5}{Band_4}
+
+$$
+```{r}
+Myindex <- (raster(GISfiles[4]) - raster(GISfiles[5]))/(raster(GISfiles[4]))
+plot(Myindex)
+```
+
+The result is a very different image. This is how GIS aand EO specialist create Normalized Difference Vegetation Index (NDVI) and other indexes. 
+ 
+
 ### Attempts to download the data directly 
 ```{r}
 # Extracting directly from Copenicus (Not really working)
@@ -257,7 +275,15 @@ points(x= Clean$longitude,
 
 # Merging sample points with raster information
 
-The sample point data set 
+The sample point data set needs to be merged with raster images. The resulting file will be of tabular form with, for each observation (points here) the land cover classification (from original sample) and features (variables) coming from the different raster images (bands) that will be considered as potentail expolanatory variiables. 
+```{r}
+ForModel <- as(Clean, 'Spatial')
+
+df <- raster::extract(image, training_points) %>%
+  round()
+
+
+```
 
 
 
