@@ -1,6 +1,6 @@
 ---
-title: "Replicating the Radiant Earth code in R "
-subtitle: "A step-by-step code "
+title: "Machine Learning for GIS and Land Cover Estimation "
+subtitle: "Replicating the Radiant Earth code in R"
 author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -34,6 +34,11 @@ library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutori
 # Tidy data management packages
 library(dplyr)
 library(data.table)
+library(modelsummary)
+
+# Model fitting packages for ML
+library(rpart)
+library(caret)
 
 
 # Plotting packages
@@ -43,6 +48,11 @@ library(RColorBrewer)
 # Nice presentation of results
 library(knitr)
 library(papeR)
+
+# My colors:
+SIAP.color <- "#0385a8"
+SIAP.red <- "#eb4034"
+
 ```
 
 
@@ -55,9 +65,8 @@ There are many data sources freely available with environmental information at a
 
 The *raw* files we have downloaded (and which are heavy) can be stored in a project folder for future usage. We collected the images of vanuatu Islands directly from [Copernicus website](https://browser.dataspace.copernicus.eu/?zoom=7&lat=-17.74869&lng=168.31055&themeId=DEFAULT-THEME&visualizationUrl=https%3A%2F%2Fsh.dataspace.copernicus.eu%2Fogc%2Fwms%2Fa91f72b5-f393-4320-bc0f-990129bd9e63&datasetId=S2_L2A_CDAS&demSource3D=%22MAPZEN%22&cloudCoverage=30&dateMode=SINGLE)
 
-We focused on only ![the island of Malakula ](https://www.tourismvanuatu.com/images/vanuatu-map-63483.jpg)
-
-
+We focused on only on the island of Malakula, since this is where we downloaded the data from Copernicus
+![](https://www.tourismvanuatu.com/images/vanuatu-map-63483.jpg)
 
 
 ### Listing all the files and all the layers of the raster images
@@ -119,7 +128,7 @@ nlayers(FullStack)
 ```
 
 but all use the same crs. 
-```{r}
+```{r, results=TRUE}
 crs(FullStack)
 ```
 
@@ -138,9 +147,7 @@ It can be useful and informative to create new raster image by combining (subtra
 For illustration purpose (this index has no meaning), let's create the followwing index
 
 $$
-
 Myindex  = \frac{Band_4 - Band_5}{Band_4}
-
 $$
 ```{r}
 Myindex <- (raster(GISfiles[4]) - raster(GISfiles[5]))/(raster(GISfiles[4]))
@@ -151,7 +158,7 @@ The result is a very different image. This is how GIS and EO specialist create N
 
 
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 as(Myindex, "SpatialPixelsDataFrame") %>% 
   as.data.frame() %>%
   ggplot(data = .) +
@@ -171,6 +178,7 @@ as(Myindex, "SpatialPixelsDataFrame") %>%
  
 
 ### Attempts to download the data directly 
+> This does not work well...
 ```{r}
 # Extracting directly from Copenicus (Not really working)
 # devtools::install_github("16EAGLE/getSpatialData")
@@ -276,11 +284,10 @@ Clean <- Temp %>%
   select( !c(general_information_coordinate_of_the_center_x,
              general_information_coordinate_of_the_center_y,
              swap,
-             Excluded))
+             Excluded, sample_plot_nr ))
 ```
 
 > **TBC**, the cleaning can be quite time consumming. 
-
 
 
 ```{r}
@@ -299,6 +306,19 @@ points(x= Clean$longitude,
        bg=1)
 ```
 
+> Alternatively, we could use the data set cleaned from the jupyter notebook (TODO)
+
+```{r}
+# library(jsonlite)
+# 
+# Clean_json_data <- read_json("Data/gdf.json")
+# Clean <- as.data.frame(Clean_json_data)
+
+
+```
+
+
+
 # Merging sample points with raster information
 
 The sample point data set needs to be merged with raster images. The resulting file will be of tabular form with, for each observation (points here) the land cover classification (from original sample) and features (variables) coming from the different raster images (bands) that will be considered as potential explanatory variables. 
@@ -315,6 +335,17 @@ xy <- cbind(Clean$longitude, Clean$latitude)
 
 # Transform this  into Spatial Vector 
 Spatialxy <- vect(xy, crs= "+proj=longlat +datum=WGS84")
+```
+
+## Extracting information from raster images 
+
+Now, we have aligned our spatial objects (points and raster images) we can extract information from the satelite images.  At each point in our sample point data set, we will extract the information for each layer of the raster images (that are stoored in a *stack*). There are several options for extracting the information. We choose to take the mean of all values in a radius of 20 meters around each points: 
+
+![](https://uw-madison-datascience.github.io/r-raster-vector-geospatial/images/BufferCircular.png)
+
+This may not be nececesary, and could be refined later. 
+
+```{r}
 
 # Converting raster Stack object from "raster" package to "terra" package format
 # Thanks to Thibault Laurent (TSE) for that trick 
@@ -325,11 +356,12 @@ FullStack2 <- rast(FullStack)
 DataExtracted <-terra::extract(x= FullStack2, 
                        y = Spatialxy, 
                        buffer= 20, 
-                       fun = mean, 
+                       fun = median, 
                        na.rm = TRUE, 
                        df = TRUE)
                      
 DataForModel <- cbind(Clean,DataExtracted )
+
 ```
 
 
@@ -340,9 +372,220 @@ DataForModel <- cbind(Clean,DataExtracted )
 
 # Machine Learning models
 
+## Data Exploration 
 
+A bit of cleaning of the data set that will be used for the ML model. We have so far **`r nrow(DataForModel)`** observations
+ 
+```{r}
+# Select variables from satellite 
+
+Important_var <- DataForModel %>%
+  select(starts_with("B"), starts_with("E"),starts_with("N")) %>% 
+  colnames()
+
+# Remove rows with missing values in the selected variables
+DataForModel <- DataForModel[complete.cases(DataForModel[Important_var]), , drop = FALSE]
+```
+ 
+ Now, We only have  **`r nrow(DataForModel)`** observations, which is really small...
+ 
+ Still we can do a bit of descriptive analysis
+
+```{r, results= TRUE }
+datasummary_skim(DataForModel )
+```
+
+
+## Definition of the classification variable 
+
+We have 3 different  levels of classification as described in the NFI codelist. 
+
+```{r , results= TRUE }
+datasummary_skim(DataForModel , type = "categorical"  )
+```
+
+
+At the Vegetation Type level 1 , there is a simple distinction between forest (1) and non-Forest (2)
+
+```{r,  results= TRUE }
+datasummary_skim(DataForModel$vegetation_type_l1 , type = "categorical"  )
+```
+We'll start simply with that variable to predict. We need to convert to a factor for the analysis and select the variables (features) that could predict that value.
 
 ```{r}
+DataForModel$Class1 <- as.factor(DataForModel$vegetation_type_l1)
+
+DataForModel <- DataForModel %>%
+  select( "Class1", all_of(Important_var))
+
+
+```
+
+
+There is a  **class imbalance** in the target variable *Class1* that we need to keep in mind.  
+
+## Train and Validation data sets
+
+```{r }
+# Splits data into training and testing sets
+set.seed(2512)
+# We'll randomly pick some observation from the full data set
+
+trainIndex <- createDataPartition(DataForModel$Class1, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# Creating the two data sets: 
+train_data <- DataForModel[ trainIndex,]
+validation_data  <- DataForModel[-trainIndex,]
+
+```
+
+Just to have a look at our train data set
+
+```{r,  results= TRUE }
+datasummary_skim(train_data$Class1 , type = "categorical"  )
+```
+
+
+# Random Forest
+
+Random Forest is *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
+
+In the case of regression we average the output over all the decision trees, whereas in classification our final output will be based on the **majority vote** of the individual decision trees. 
+
+## Fitting the Random Forest
+
+
+```{r, include = FALSE, echo = FALSE}
+# function to set up random seeds when running on several cores 
+#  (you do not need to understand that)
+
+setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 1237) {
+  #B is the number of resamples and integer vector of M (numbers + tune length if any)
+  B <- if (method == "cv") numbers
+  else if(method == "repeatedcv") numbers * repeats
+  else NULL
+  
+  if(is.null(length)) {
+    seeds <- NULL
+  } else {
+    set.seed(seed = seed)
+    seeds <- vector(mode = "list", length = B)
+    seeds <- lapply(seeds, function(x) sample.int(n = 1000000, size = numbers + ifelse(is.null(tunes), 0, tunes)))
+    seeds[[length(seeds) + 1]] <- sample.int(n = 1000000, size = 1)
+  }
+  # return seeds
+  seeds
+}
+
+```
+
+
+
+```{r, include = FALSE}
+# Repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                      numbers = 5, repeats = 5, 
+                      tunes = 100, seed = 777)
+
+# Configure the trainControl argument for cross-validation
+K5_CV_seed <- trainControl(method = "cv", number = 5, classProbs = FALSE, 
+                           savePredictions = TRUE, seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+```
+
+We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
+
+```{r, cache = TRUE}
+set.seed(2512)
+
+# Training this model takes a few minutes
+rf_fit <- train(Class1 ~ .,
+                  data = train_data,
+                  method = "rf",
+                  trControl = K5_CV_seed)
+```
+
+```{r, results=TRUE}
+rf_fit
+```
+
+## Evaluating Model Performance 
+
+We can also assess the decision trees both *in sample* and *out of sample* performance. 
+
+#### The *in sample* performance is:
+
+```{r, results=TRUE}
+rf_pred <- predict(rf_fit, train_data)
+confusionMatrix(rf_pred, train_data$Class1, positive = "1")
+```
+
+We need now further investigation to see if the model generalizes well or if it just has learned the training data. 
+
+#### The *Out of sample* performance:
+
+
+```{r, results=TRUE}
+rf_pred <- predict(rf_fit, validation_data)
+confusionMatrix(rf_pred, validation_data$Class1, positive = "1")
+```
+
+
+The out of sample performance is obviously lower, the sensitivity and kappa lower than before but the difference is not that important.  We may still try to improve by optimizing some of the parameters. 
+
+# Optimizing Random Forests
+
+
+## Optimizing the combinations of variables 
+
+> A trick is to begin to optimize the random forest on our training process first. 
+This may end up saving us a lot of training time. 
+
+We therefore begin by tuning the **number of possible variables** considered at each split in a decision tree by tuning the *mtry* hyperparameter. We do a grid search and compute the accuracy for each value of *mtry* $\in \{0,8\}$.
+
+```{r, cache = TRUE}
+# /!\ running this chunk can be long!
+tunegrid <- expand.grid(.mtry = (1:8)) 
+
+rf_gridsearch <- train(Class1 ~ ., 
+                       data = train_data,
+                       method = 'rf',
+                       metric = 'accuracy',
+                       tuneGrid = tunegrid,
+                       ntree = 100)
+
+```
+
+
+```{r, results=TRUE}
+print(rf_gridsearch)
+```
+
+
+```{r mtryANDaccuracy}
+ggplot(data=rf_gridsearch$results, aes(Accuracy, x = mtry)) +
+  geom_line( colour = SIAP.color)+
+  geom_point(colour = "grey")+
+  ggtitle(label = "Optimizing the accuracy of the trained random forest model") +
+  labs(x = "Nb of variables considered at each split (mtry)" )+
+  theme_minimal()
+```
+
+```{r mtryANDkappa}
+ggplot(data=rf_gridsearch$results, aes(y = Kappa, x = mtry )) +
+  geom_line(color= SIAP.red)+
+  geom_point(colour = "grey")+
+  ggtitle(label = "Optimizing the Kappa of the trained random forest model") +
+  labs(x = "Nb of variables considered at each split (mtry)" )+
+  theme_minimal()
+```
+
+
+
+```{r, exit}
 knitr::knit_exit()
 ```
 
