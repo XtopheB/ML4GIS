@@ -1,13 +1,15 @@
 ---
-title: "Using GIS environmental data for gender statistics analysis"
-subtitle: "A step-by-step case study with Bangladesh data "
-author: "Christophe Bontemps & Eunkoo Lee (SIAP)"
+title: "Replicating the Radiant Earth code in R "
+subtitle: "A step-by-step code "
+author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:
     code_folding: show
+    toc: yes
+    toc_float: true
     highlight: tango
-    number_sections: yes
+    number_sections: no
     theme: lumen
   pdf_document: default
   word_document: default
@@ -17,17 +19,12 @@ output:
 knitr::opts_chunk$set( message = FALSE, warning = FALSE, results =FALSE, echo = TRUE) 
 ```
 
-* * *
-
-
-# GIS data sources
-
-There are many data sources freely available with environmental information at a very detailed level. These files are from huge data bases that cover large areas of the word. 
-
-
-We need a minimum of organisation in the data and code folders, as well as some R packages.
 
 ```{r packages}
+# File management
+library(readxl)
+
+
 # GIS packages
 library(raster) ## for reading "RASTER" files
 library(rgdal)  ## for reading "shapefiles"
@@ -48,11 +45,23 @@ library(knitr)
 library(papeR)
 ```
 
-The *raw* files we have downloaded (and which are heavy) can be stored in a project folder for future usage. 
+
+# GIS data sources
+
+There are many data sources freely available with environmental information at a very detailed level. These files are from huge data bases that cover large areas of the word. 
+
+
+## Satelite images
+
+The *raw* files we have downloaded (and which are heavy) can be stored in a project folder for future usage. We collected the images of vanuatu Islands directly from [Copernicus website](https://browser.dataspace.copernicus.eu/?zoom=7&lat=-17.74869&lng=168.31055&themeId=DEFAULT-THEME&visualizationUrl=https%3A%2F%2Fsh.dataspace.copernicus.eu%2Fogc%2Fwms%2Fa91f72b5-f393-4320-bc0f-990129bd9e63&datasetId=S2_L2A_CDAS&demSource3D=%22MAPZEN%22&cloudCoverage=30&dateMode=SINGLE)
+
+We focused on only ![the island of Malakula ](https://www.tourismvanuatu.com/images/vanuatu-map-63483.jpg)
 
 
 
-## Listing all the files and all the layers 
+
+### Listing all the files and all the layers of the raster images
+We downloaded several raster images  or *.tiff* files. Each file can embed several layers. We downloaded here several *tiff* files.     
 
 ```{r}
 GISfiles <- list.files(path = "Data/GIS/",
@@ -66,6 +75,7 @@ GISfiles
 
 ## Reading Sentinel2 data (raster files) 
 
+It is important to ave a look at the metadata to understand the structure of the data (*e.g.* how many layers) and to find some important information on the **coordinate reference system** (crs) used.  
  
 ```{r}
 # Reading GIS files 
@@ -73,9 +83,11 @@ SentinelData1<-raster(GISfiles[1])
 SentinelData2<-raster(GISfiles[2])   
 SentinelData3<-raster(GISfiles[3])   
 
-
+# Information on a specific file from Sentinel data 
 SentinelData1
 ```
+One can also plot directly one image. 
+
 ```{r}
 plot(SentinelData1,
      main = "Raster Image Plot",      # Title of the plot
@@ -83,6 +95,9 @@ plot(SentinelData1,
      box = FALSE,                      # Remove box around plot
      )
 ```
+
+One can also stack all the layers in one single object. Here we selected the files that were collected for a single date. 
+
 ```{r}
 # create raster stack
 # Use (https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r)
@@ -97,20 +112,18 @@ Next, we read in the different bands that comprise the satellite imagery. Each b
 # plot stack
 plot(FullStack)
 ```
+In total in our full stack, we have a lot of different bands
 
 ```{r}
-# plotRGB(FullStack,r=4,g=3,b=2, stretch = "lin")
+nlayers(FullStack)
+```
 
-#EVI 
-plot(raster(GISfiles[4]))
-
+but all use the same crs. 
+```{r}
+crs(FullStack)
 ```
 
 
-```{r}
-# TRUE color
-plot(raster(GISfiles[8]))
-```
 ```{r}
 #Moisture
 plot(raster(GISfiles[4]))
@@ -119,25 +132,9 @@ You’ll notice that the range of values for each raster varies:
 ```{r}
 res(raster(GISfiles[4]))
 ```
-In total in our full stack, we have a lot of different bands
-
+### Attempts to download the data directly 
 ```{r}
-nlayers(FullStack)
-```
-```{r}
-crs(FullStack)
-```
-
-
-```{r}
-
-```
-
-
-
 # Extracting directly from Copenicus (Not really working)
-
-```{r}
 # devtools::install_github("16EAGLE/getSpatialData")
 
 library(getSpatialData)
@@ -162,8 +159,6 @@ Vanuatu_aoi <- matrix(data = c(166, -13,  # Upper left corner
               ncol = 2, byrow = TRUE)
 
  set_aoi(Vanuatu_aoi)
-
-
 
 ```
 
@@ -194,7 +189,85 @@ Sproducts <- get_products("sentinel")
 ```
 
 
+# Forest inventory data
 
+Radiant Earth and the Vanuatu Department of Forests collected the data set that will serve for estimating the ML model. 
+
+
+## Loading the data
+The data set is an excel file with geographical information. It is not ba GIS file, but tabular data with *x* (longitude) and *Y* (latitude) coordinates
+
+```{r}
+Observations <- read_excel("Data/5. sample_plot_measurements.xlsx")
+nrow(Observations)
+```
+
+> There are some errors in the code 
+
+For example: the latitude (Y) of Port-Vila is -17.734818 and its longitude (X) is 168.322021, so in our data set we should have negative Xs and positve Ys in the dataset. Also the values should be of the same order. 
+
+After cleaning and rearranging the data (coding errors), we can use a clean data set. See Blanca's demo or Radiant Earth code (but that part is not running on Google colab)  
+
+
+```{r}
+# Clean <- read_excel("Data/modified_dataset.xlsx")
+# nrow(Clean)
+```
+
+### Swapping back latitude (Ys) and longitude (Xs) 
+
+First we remove NAs and exchange latitude and longitudes that were apparently swapped. 
+```{r}
+Temp <- Observations %>%
+  filter(!is.na(general_information_coordinate_of_the_center_x )) %>%
+  mutate( swap = ifelse( general_information_coordinate_of_the_center_y > 19, "yes", "no"), 
+          latitude = ifelse(swap == "yes", general_information_coordinate_of_the_center_x,
+                            general_information_coordinate_of_the_center_y), 
+          longitude = ifelse(swap == "yes", general_information_coordinate_of_the_center_y,
+                            general_information_coordinate_of_the_center_x))  
+
+```
+
+We have now `r nrow(Temp)` observations (removing `r length(which(is.na(Observations$general_information_coordinate_of_the_center_x ) )) ` NAs )
+
+### Inputing negative values for latitude
+
+```{r}
+Clean <- Temp %>%
+  mutate(latitude = ifelse(latitude >0, -latitude, latitude))
+```
+
+
+
+```{r}
+# Main plot using the plotting function of raster package
+
+plot(raster(GISfiles[8]) ,
+     main="Map with sample points on a raster image", 
+     sub="Malakula  Island") 
+
+# We can add points for each cluster location on this map
+points(x= Clean$longitude,
+       y= Clean$latitude,
+       type="p", col = "red", 
+       cex=0.3, 
+       pch=21, 
+       bg=1)
+```
+
+# Merging sample points with raster information
+
+The sample point data set 
+
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+****
+# Old stuff 
 
 
 ## Extracting values from a raster    
