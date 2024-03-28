@@ -147,7 +147,27 @@ Myindex <- (raster(GISfiles[4]) - raster(GISfiles[5]))/(raster(GISfiles[4]))
 plot(Myindex)
 ```
 
-The result is a very different image. This is how GIS aand EO specialist create Normalized Difference Vegetation Index (NDVI) and other indexes. 
+The result is a very different image. This is how GIS and EO specialist create Normalized Difference Vegetation Index (NDVI) and other indexes. 
+
+
+
+```{r}
+as(Myindex, "SpatialPixelsDataFrame") %>% 
+  as.data.frame() %>%
+  ggplot(data = .) +
+  geom_tile(aes(x = x, y = y, fill = layer)) +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank(),
+        panel.grid.minor = element_blank()) +
+  labs(title = "Index plotted with ggplot", 
+       x = " ", 
+       y = " ") +
+  scale_fill_gradient(high = "#CEE50E", 
+                      low = "#087F28",
+                      name = "Myindex")
+```
+
  
 
 ### Attempts to download the data directly 
@@ -252,8 +272,14 @@ We have now `r nrow(Temp)` observations (removing `r length(which(is.na(Observat
 
 ```{r}
 Clean <- Temp %>%
-  mutate(latitude = ifelse(latitude >0, -latitude, latitude))
+  mutate(latitude = ifelse(latitude >0, -latitude, latitude))%>%
+  select( !c(general_information_coordinate_of_the_center_x,
+             general_information_coordinate_of_the_center_y,
+             swap,
+             Excluded))
 ```
+
+> **TBC**, the cleaning can be quite time consumming. 
 
 
 
@@ -275,15 +301,44 @@ points(x= Clean$longitude,
 
 # Merging sample points with raster information
 
-The sample point data set needs to be merged with raster images. The resulting file will be of tabular form with, for each observation (points here) the land cover classification (from original sample) and features (variables) coming from the different raster images (bands) that will be considered as potentail expolanatory variiables. 
+The sample point data set needs to be merged with raster images. The resulting file will be of tabular form with, for each observation (points here) the land cover classification (from original sample) and features (variables) coming from the different raster images (bands) that will be considered as potential explanatory variables. 
+
+
+##  Converting points to spatial format
+
+
 ```{r}
-ForModel <- as(Clean, 'Spatial')
+# https://uw-madison-datascience.github.io/r-raster-vector-geospatial/
 
-df <- raster::extract(image, training_points) %>%
-  round()
+# First we create the vector with only long and latitude
+xy <- cbind(Clean$longitude, Clean$latitude)
 
+# Transform this  into Spatial Vector 
+Spatialxy <- vect(xy, crs= "+proj=longlat +datum=WGS84")
 
+# Converting raster Stack object from "raster" package to "terra" package format
+# Thanks to Thibault Laurent (TSE) for that trick 
+
+FullStack2 <- rast(FullStack)
+
+# Finally, extract values from raster at the points
+DataExtracted <-terra::extract(x= FullStack2, 
+                       y = Spatialxy, 
+                       buffer= 20, 
+                       fun = mean, 
+                       na.rm = TRUE, 
+                       df = TRUE)
+                     
+DataForModel <- cbind(Clean,DataExtracted )
 ```
+
+
+```{r}
+# Removing the prefix to ease the reading of the variables 
+ colnames(DataForModel) <- gsub('X2021.05.27.00_00_2021.06.27.23_59_Sentinel.2_L2A_','',colnames(DataForModel))
+```
+
+# Machine Learning models
 
 
 
