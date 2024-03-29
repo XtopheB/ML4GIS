@@ -36,6 +36,7 @@ library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutori
 library(dplyr)
 library(data.table)
 library(modelsummary)
+library(ggcorrplot)
 
 # Model fitting packages for ML
 library(rpart)
@@ -406,9 +407,9 @@ DataForModel <- DataForModel[complete.cases(DataForModel[Important_var]), , drop
 > Our dataset for model is now ready. It has a tabular form (**`r nrow(DataForModel)`** observations), each row being a point in the primary dataset. The variables are all information from the primary dataset +  all features from each layer of the Raster images at the selected points. 
 
 
-# Machine Learning models
+# Models
 
-## Data Exploration 
+## Dataset for model
  Now, We only have  **`r nrow(DataForModel)`** observations, which is really small...
  
  Still we can do a bit of descriptive analysis
@@ -432,19 +433,50 @@ At the Vegetation Type level 1 , there is a simple distinction between forest (1
 ```{r,  results= TRUE }
 datasummary_skim(DataForModel$vegetation_type_l1 , type = "categorical"  )
 ```
+
 We'll start simply with that variable to predict. We need to convert to a factor for the analysis and select the variables (features) that could predict that value.
 
 ```{r}
-DataForModel$Class1 <- as.factor(DataForModel$vegetation_type_l1)
+DataForModel$Class1 <- as.factor(ifelse(DataForModel$vegetation_type_l1 == "1", 1, 0 ))
+# names(DataForModel$Class1) <- c("Forest", "Non-Forest")
+
+levels(DataForModel$Class1)=c("Forest", "Non-Forest")
 
 DataForModel <- DataForModel %>%
   select( "Class1", all_of(Important_var))
+```
 
+```{r}
+DataForModel %>%
+ggplot() + 
+  geom_bar(aes(y = Class1), colour="white", fill = SIAP.color) +
+  labs(x = "", y = "") +
+  ggtitle("Vegetation Index Level 1") +
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  theme_minimal() 
+  
+  
+```
 
+There is a  **class imbalance** in the target variable *Class1* that we need to keep in mind.  
+
+## Explanatory variables 
+
+We can have a view on the correlation of the explanatory variables to understand and hihlight the specificity of each band from the raster images. 
+
+```{r}
+# We compute the correlation matrix of the covariates
+corr_coef<-cor(DataForModel[,  Important_var], use = "p")
+
+#And then plot it with nice options 
+ggcorrplot(corr_coef, 
+           type = "lower",         # lower triangle of the matrix only
+           hc.order = TRUE,        # variable sorted from highest to lowest
+           outline.col = "white",  #Color options
+           lab = TRUE)
 ```
 
 
-There is a  **class imbalance** in the target variable *Class1* that we need to keep in mind.  
 
 ## Train and Validation data sets
 
@@ -470,14 +502,53 @@ datasummary_skim(train_data$Class1 , type = "categorical"  )
 ```
 
 
-# Random Forest
+### Before we start
 
+```{r controls}
+
+# Summary fucntion with six statistics of interest 
+sixStats <- function(...) c(twoClassSummary(...), 
+                            defaultSummary(...))
+
+# control variables (see later)
+K <- 5
+repeats <- 10
+rcvTunes <- 1 # tune number of models
+seed <- 123
+# repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                     numbers = K, repeats = repeats,
+                     tunes = rcvTunes, seed = seed)
+
+ctrl <- trainControl(method = "repeatedcv",
+                     number = K, 
+                     repeats = repeats,
+                     seeds = rcvSeeds,
+                     classProbs = TRUE,
+                     summaryFunction = sixStats)
+
+TrControl <- trainControl(method = "none",
+                          classProbs=FALSE, 
+                          savePredictions = TRUE)
+
+```
+
+
+## Logistic model 
+
+
+```{r}
+Logit <- train(Class1 ~ . , data = train_data, 
+               method = "glm",
+               preProcess = c("center"),
+               trControl = TrControl)
+summary(Logit)
+```
+
+##  Random Forest
 Random Forest is *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
 
 In the case of regression we average the output over all the decision trees, whereas in classification our final output will be based on the **majority vote** of the individual decision trees. 
-
-## Fitting the Random Forest
-
 
 ```{r, include = FALSE, echo = FALSE}
 # function to set up random seeds when running on several cores 
@@ -536,7 +607,7 @@ rf_fit
 
 ## Evaluating Model Performance 
 
-We can also assess the decision trees both *in sample* and *out of sample* performance. 
+We can also assess the decision trees both *in sample*, that is how well the model estimates teh data within the training dataset  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
 
 #### The *in sample* performance is:
 
@@ -545,9 +616,9 @@ rf_pred <- predict(rf_fit, train_data)
 confusionMatrix(rf_pred, train_data$Class1, positive = "1")
 ```
 
-We need now further investigation to see if the model generalizes well or if it just has learned the training data. 
+We need now further investigation to see if the model generalizes well or if it just has learned from the training data. 
 
-#### The *Out of sample* performance:
+#### The *Out of sample* performance 
 
 
 ```{r, results=TRUE}
@@ -557,6 +628,16 @@ confusionMatrix(rf_pred, validation_data$Class1, positive = "1")
 
 
 The out of sample performance is obviously lower, the sensitivity and kappa lower than before but the difference is not that important.  We may still try to improve by optimizing some of the parameters. 
+
+
+```{r}
+boxplot(rf_fit$resample$Accuracy, main="Accuracy", 
+        col='#ffffcc',
+        # ylim = range(0:1),
+        frame.plot = FALSE)
+```
+
+
 
 # Optimizing Random Forests
 
@@ -604,6 +685,8 @@ ggplot(data=rf_gridsearch$results, aes(y = Kappa, x = mtry )) +
   labs(x = "Nb of variables considered at each split (mtry)" )+
   theme_minimal()
 ```
+
+# Model comparison
 
 
 
