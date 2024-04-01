@@ -293,6 +293,21 @@ Clean <- Temp %>%
 
 > **TBC**, the cleaning can be quite time consumming. 
 
+### Visualizing points 
+
+```{r}
+plot(raster(GISfiles[5])) 
+
+points(x= Clean$longitude,
+       y= Clean$latitude,
+       type="p", col = "red", 
+       cex=0.3, 
+       pch=21, 
+       bg=1)
+```
+
+
+
 # Satellite data extraction
 
 We are now  in possession of two sources of geospatial information
@@ -440,7 +455,7 @@ We'll start simply with that variable to predict. We need to convert to a factor
 DataForModel$Class1 <- as.factor(ifelse(DataForModel$vegetation_type_l1 == "1", 1, 0 ))
 # names(DataForModel$Class1) <- c("Forest", "Non-Forest")
 
-levels(DataForModel$Class1)=c("Forest", "Non-Forest")
+levels(DataForModel$Class1)=c("Forest", "NonForest")
 
 DataForModel <- DataForModel %>%
   select( "Class1", all_of(Important_var))
@@ -504,51 +519,8 @@ datasummary_skim(train_data$Class1 , type = "categorical"  )
 
 ### Before we start
 
-```{r controls}
 
-# Summary fucntion with six statistics of interest 
-sixStats <- function(...) c(twoClassSummary(...), 
-                            defaultSummary(...))
-
-# control variables (see later)
-K <- 5
-repeats <- 10
-rcvTunes <- 1 # tune number of models
-seed <- 123
-# repeated cross validation
-rcvSeeds <- setSeeds(method = "repeatedcv", 
-                     numbers = K, repeats = repeats,
-                     tunes = rcvTunes, seed = seed)
-
-ctrl <- trainControl(method = "repeatedcv",
-                     number = K, 
-                     repeats = repeats,
-                     seeds = rcvSeeds,
-                     classProbs = TRUE,
-                     summaryFunction = sixStats)
-
-TrControl <- trainControl(method = "none",
-                          classProbs=FALSE, 
-                          savePredictions = TRUE)
-
-```
-
-
-## Logistic model 
-
-
-```{r}
-Logit <- train(Class1 ~ . , data = train_data, 
-               method = "glm",
-               preProcess = c("center"),
-               trControl = TrControl)
-summary(Logit)
-```
-
-##  Random Forest
-Random Forest is *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
-
-In the case of regression we average the output over all the decision trees, whereas in classification our final output will be based on the **majority vote** of the individual decision trees. 
+###  Selecting hyperparameters choices
 
 ```{r, include = FALSE, echo = FALSE}
 # function to set up random seeds when running on several cores 
@@ -574,6 +546,208 @@ setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed
 
 ```
 
+```{r}
+# Summary fucntion with six statistics of interest 
+sixStats <- function(...) c(twoClassSummary(...), 
+                            defaultSummary(...))
+```
+
+We use here K= 5 and 10 repetition of the process. We then estimate $5 \times10 = 50$ different predictions.
+
+```{r controls}
+
+# control variables (see later)
+K <- 5
+repeats <- 10
+rcvTunes <- 1 # tune number of models
+seed <- 123
+
+# repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                     numbers = K, repeats = repeats,
+                     tunes = rcvTunes, seed = seed)
+
+# Controls for Cross Validation
+ctrl <- trainControl(method = "repeatedcv",
+                     number = K, 
+                     repeats = repeats,
+                     seeds = rcvSeeds,
+                     classProbs = TRUE,
+                     summaryFunction = sixStats)
+
+#Controls for single estimation
+SimpleControl <- trainControl(method = "none",
+                          classProbs=FALSE, 
+                          savePredictions = TRUE)
+
+```
+
+## Logistic model 
+
+Let's run a single logisitc model on the train data set
+
+```{r}
+Logit <- train(Class1 ~ . , data = train_data, 
+               method = "glm",
+               preProcess = c("center"),
+               trControl = SimpleControl)
+summary(Logit)
+Logit
+```
+
+
+
+
+## Receiving Operating Characteristic (ROC) Curve
+
+By varying the threshold (usual at 1/2) we can make sensitivity and specificity vary. The ROC curve is based on predicted probabilities and show how both vary when we vary the threshold.
+
+> To see the value of the threshold, hover the ROC curve with your mouse
+
+```{r ROCfig}
+library(pROC)
+# Estimating with a logit classifier
+pprob <- predict(Logit, train_data, type = "prob")
+
+# Computing the ROC curve (specificity, Sensitivity) for many threshold
+train_dataROC <- roc(train_data$Class1, pprob$Forest)
+
+# Gathering the results
+myROC <- data.frame(cbind(train_dataROC$specificities,
+                          train_dataROC$sensitivities, 
+                          train_dataROC$thresholds)) %>% 
+  mutate_if(is.numeric, ~ifelse(abs(.) == Inf,NA,.))%>%
+  mutate(FPR = 1- X1, 
+         t = round(X3, 2)) %>%
+   rename(Specificity = X1, 
+         TPR = X2) 
+
+# Computing the AUC
+train_dataAUC <-  pROC::auc(train_dataROC)
+
+# Visualizing
+pRoc <- myROC%>%
+  distinct(FPR, .keep_all = TRUE) %>%
+ggplot() +
+ aes(x = FPR, y = TPR, label =  t) +
+ geom_line( colour = "red") +
+ labs(x = "FPR (1- Specificity)", 
+      y = "TPR (sensitivity)", 
+      title = "ROC curve" ) +
+ theme_minimal()
+
+# Computing the  isoline
+        
+pRoc <- pRoc +  geom_segment(aes(x = 1, xend = 0, y = 1, yend = 0), color="darkgrey", linetype="dashed")
+
+#pRoc
+
+#For an interactive version, uncomment these lines (needs the plotly package)
+library(plotly)
+ggplotly(pRoc, tooltip = "label")
+```
+
+There are various methods to find the best threshold, but one consist of finding the point that is the closest to the  top-left part of the plot  where specificity and sensitivity would be both = 1. 
+
+Alternatively, the optimal threshold can be chosen as the point maximizing the *youden* criteria, defined as $Specificty + Sensitivity -1$, or as point that maximizes the distance to the
+diagonal line.
+
+Here the best threshold, corresponding to the point closest to top-left of the plot, is:
+
+```{r ROC}
+best.coords <- coords(train_dataROC, "best",
+        best.method="closest.topleft",
+       ret=c("threshold", "specificity", "sensitivity"), transpose = FALSE)
+best.coords
+
+```
+```{r ROCfigBest}
+pRoc +
+  annotate("point", x = 0,  y = 1,
+           size = 1.5, colour = "red") +
+  annotate("text", x = 0.08,  y = 1, label = "Ideal",
+            colour = "red") +
+  annotate("text", x = as.numeric(1-best.coords[2] + 0.02),
+            y = as.numeric(best.coords[3]+ 0.05), label = "Best", 
+           colour = "red") +
+  annotate("point", x = as.numeric(1-best.coords[2]),
+            y = as.numeric(best.coords[3]),
+            size = 1.5, colour = "red") +
+  geom_segment(aes(x =  as.numeric(1-best.coords[2]), xend = 0,
+                      y = as.numeric(best.coords[3]), yend = 1), 
+        arrow=arrow(length=unit(0.4,"cm")), linetype=2, color = "red") 
+  
+  
+```
+
+> Changing the threshold is done to compute the predicted classes **after** the estimation of probabilities 
+
+```{r}
+
+# Custom threshold value
+threshold <- as.numeric(best.coords[1])  # Value computed to be the "best" 
+
+# Predict probabilities
+predicted_probabilities <- predict(Logit, train_data, type = "prob")
+
+# Classify observations based on the custom threshold
+predicted_classes <- as.factor(ifelse(predicted_probabilities[, "Forest"] >= threshold, "Forest", "NonForest"))
+
+# Create confusion matrix
+confusion_matrix <- confusionMatrix(predicted_classes, train_data$Class1)
+
+# Get performance metrics
+accuracy <- confusion_matrix$overall['Accuracy']
+Specificty  <- confusion_matrix$byClass['Specificty']
+sensitivity <- confusion_matrix$byClass['Sensitivity']
+kappa <- confusion_matrix$byClass['kappa']
+```
+
+```{r}
+confusion_matrix$table
+```
+
+## Visualizing other indicators on a logit model  
+
+Let's run a CV on the logit model (*train data set*) 
+
+
+```{r}
+set.seed(2512)
+LogitFit<- train(Class1 ~ ., data = train_data, 
+               method = "glm" , 
+               preProcess = c("center"),
+               trControl = ctrl)
+summary(LogitFit)
+LogitFit
+```
+
+> We can visualize the distribution of AUC,  sensitivity & specificity for each sample generated in the CV process
+
+```{r CVAUCfig}
+par(mfrow=c(1,5))
+boxplot(LogitFit$resample$Accuracy, main="Accuracy", 
+        col='#ffffcc',ylim = range(0:1),  frame.plot = FALSE)
+boxplot(LogitFit$resample$Sens, main="Sensitivity", 
+        col='#b3cde3',ylim = range(0:1),  frame.plot = FALSE)
+boxplot(LogitFit$resample$Spec, main="Specificity",
+        col='#ccebc5', ylim = range(0:1), frame.plot = FALSE)
+boxplot(LogitFit$resample$Kappa, main="Kappa",
+        col='#decbe4',ylim = range(0:1),  frame.plot = FALSE)
+boxplot(LogitFit$resample$ROC, main="AUC",
+        col='#fbb4ae', ylim = range(0:1), frame.plot = FALSE)
+
+```
+
+
+
+
+##  Random Forest
+Random Forest is *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
+
+In the case of regression we average the output over all the decision trees, whereas in classification our final output will be based on the **majority vote** of the individual decision trees. 
+
+We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
 
 
 ```{r, include = FALSE}
@@ -589,7 +763,6 @@ K5_CV_seed <- trainControl(method = "cv", number = 5, classProbs = FALSE,
 
 ```
 
-We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
 
 ```{r, cache = TRUE}
 set.seed(2512)
@@ -607,13 +780,13 @@ rf_fit
 
 ## Evaluating Model Performance 
 
-We can also assess the decision trees both *in sample*, that is how well the model estimates teh data within the training dataset  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
+We can also assess the decision trees both *in sample*, that is how well the model estimates the data within the training dataset  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
 
 #### The *in sample* performance is:
 
 ```{r, results=TRUE}
 rf_pred <- predict(rf_fit, train_data)
-confusionMatrix(rf_pred, train_data$Class1, positive = "1")
+confusionMatrix(rf_pred, train_data$Class1, positive = "Forest")
 ```
 
 We need now further investigation to see if the model generalizes well or if it just has learned from the training data. 
@@ -623,7 +796,7 @@ We need now further investigation to see if the model generalizes well or if it 
 
 ```{r, results=TRUE}
 rf_pred <- predict(rf_fit, validation_data)
-confusionMatrix(rf_pred, validation_data$Class1, positive = "1")
+confusionMatrix(rf_pred, validation_data$Class1, positive = "Forest")
 ```
 
 
