@@ -517,10 +517,9 @@ datasummary_skim(train_data$Class1 , type = "categorical"  )
 ```
 
 
-### Before we start
+The data preparation & validation methods ends here, so let’s process to machine learning models.
 
-
-###  Selecting hyperparameters choices
+###  Selecting  Cross Validation parameters
 
 ```{r, include = FALSE, echo = FALSE}
 # function to set up random seeds when running on several cores 
@@ -552,7 +551,7 @@ sixStats <- function(...) c(twoClassSummary(...),
                             defaultSummary(...))
 ```
 
-We use here K= 5 and 10 repetition of the process. We then estimate $5 \times10 = 50$ different predictions.
+By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specifiy the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
 
 ```{r controls}
 
@@ -560,12 +559,14 @@ We use here K= 5 and 10 repetition of the process. We then estimate $5 \times10 
 K <- 5
 repeats <- 10
 rcvTunes <- 1 # tune number of models
-seed <- 123
+seed <- 2512
 
 # repeated cross validation
 rcvSeeds <- setSeeds(method = "repeatedcv", 
-                     numbers = K, repeats = repeats,
-                     tunes = rcvTunes, seed = seed)
+                     numbers = K, 
+                     repeats = repeats,
+                     tunes = rcvTunes, 
+                     seed = seed)
 
 # Controls for Cross Validation
 ctrl <- trainControl(method = "repeatedcv",
@@ -575,39 +576,112 @@ ctrl <- trainControl(method = "repeatedcv",
                      classProbs = TRUE,
                      summaryFunction = sixStats)
 
-#Controls for single estimation
-SimpleControl <- trainControl(method = "none",
-                          classProbs=FALSE, 
-                          savePredictions = TRUE)
 
 ```
+
+
+> We may refer to the `r caret` [package manual](https://topepo.github.io/caret/model-training-and-tuning.html) to learn about all the options and models available. The algorithm that will be conducted all along this exercise is the following ![](https://topepo.github.io/caret/premade/TrainAlgo.png)
+
+
 
 ## Logistic model 
 
-Let's run a single logisitc model on the train data set
+Let's train a logistic model using the k-fold Cross Validation. We use here only the training data set.  
 
 ```{r}
-Logit <- train(Class1 ~ . , data = train_data, 
+Logit_pred <- train(Class1 ~ . , data = train_data, 
                method = "glm",
                preProcess = c("center"),
-               trControl = SimpleControl)
-summary(Logit)
-Logit
+               trControl = ctrl)
+```
+
+### The *in sample* performance:
+We have some information on how the models performed on the **training** data set.  
+
+```{r}
+# This recalled the model we just have ran 
+Logit_pred
 ```
 
 
+
+The results show that some variables are colinear (singularities)
+
+```{r}
+summary(Logit_pred)
+```
+
+
+### Other indicators on the CV  
+
+> We can visualize the distribution of all the metrics (sensitivity,specificity, ...) for each sample generated in the CV process.
+
+```{r CVAUCfig}
+par(mfrow=c(1,5))
+boxplot(Logit_pred$resample$Accuracy, main="Accuracy", 
+        col='#ffffcc',ylim = range(0:1),  frame.plot = FALSE)
+boxplot(Logit_pred$resample$Sens, main="Sensitivity", 
+        col='#b3cde3',ylim = range(0:1),  frame.plot = FALSE)
+boxplot(Logit_pred$resample$Spec, main="Specificity",
+        col='#ccebc5', ylim = range(0:1), frame.plot = FALSE)
+boxplot(Logit_pred$resample$Kappa, main="Kappa",
+        col='#decbe4',ylim = range(0:1),  frame.plot = FALSE)
+boxplot(Logit_pred$resample$ROC, main="AUC",
+        col='#fbb4ae', ylim = range(0:1), frame.plot = FALSE)
+
+```
+
+#### The *Out of sample*  performance 
+
+Now that our model has been estimated, we can compute some performance indicators on the validation set (*Out of sample* data set) that has not been used for the estimation.  
+
+```{r}
+# Predict probabilities
+predicted_probabilities <- predict(Logit_pred, validation_data, type = "prob")
+
+# Classify observations based on the custom threshold, here 0.5 (usual)
+predicted_classes <- as.factor(ifelse(predicted_probabilities[, "Forest"] >= 0.5, "Forest", "NonForest"))
+
+# Results 
+# confusionMatrix(predicted_classes, validation_data$Class1)
+
+# Create clean  confusion matrix
+confusion_matrix <- confusionMatrix(predicted_classes, validation_data$Class1)
+
+```
+
+### Confusion matrix
+
+```{r, results=TRUE}
+# We can extract some elements
+confusion_matrix$table
+
+##  Get performance metrics
+accuracy <- round(as.numeric(confusion_matrix$overall['Accuracy']), 2)
+# Specificty  <- confusion_matrix$byClass['Specificity']
+# sensitivity <- confusion_matrix$byClass['Sensitivity']
+# kappa <- confusion_matrix$overall['kappa']
+```
+ The accuracy is **`r accuracy`** . We can compute some other indicators of interest. 
+```{r, results=TRUE}
+Metrics <- as.data.frame(c(confusion_matrix$byClass,confusion_matrix$overall )) %>%
+   filter(row.names(Metrics) %in% c('Accuracy', 'Sensitivity', 'Specificity', 'Kappa' ))
+  
+
+kable(Metrics)
+```
 
 
 ## Receiving Operating Characteristic (ROC) Curve
 
 By varying the threshold (usual at 1/2) we can make sensitivity and specificity vary. The ROC curve is based on predicted probabilities and show how both vary when we vary the threshold.
 
-> To see the value of the threshold, hover the ROC curve with your mouse
+> To see the value of the threshold, hover the ROC curve with the mouse
 
-```{r ROCfig}
+```{r ROCfig, results = TRUE}
 library(pROC)
 # Estimating with a logit classifier
-pprob <- predict(Logit, train_data, type = "prob")
+pprob <- predict(Logit_pred, train_data, type = "prob")
 
 # Computing the ROC curve (specificity, Sensitivity) for many threshold
 train_dataROC <- roc(train_data$Class1, pprob$Forest)
@@ -654,13 +728,14 @@ diagonal line.
 
 Here the best threshold, corresponding to the point closest to top-left of the plot, is:
 
-```{r ROC}
+```{r ROC, results=TRUE}
 best.coords <- coords(train_dataROC, "best",
         best.method="closest.topleft",
        ret=c("threshold", "specificity", "sensitivity"), transpose = FALSE)
 best.coords
 
 ```
+
 ```{r ROCfigBest}
 pRoc +
   annotate("point", x = 0,  y = 1,
@@ -684,66 +759,44 @@ pRoc +
 
 ```{r}
 
-# Custom threshold value
+# Getting the best threshold value from the above 
 threshold <- as.numeric(best.coords[1])  # Value computed to be the "best" 
 
+# One can also play with the Theshold
+threshold <- 0.47
+
 # Predict probabilities
-predicted_probabilities <- predict(Logit, train_data, type = "prob")
+predicted_probabilities <- predict(Logit_pred, validation_data, type = "prob")
 
 # Classify observations based on the custom threshold
 predicted_classes <- as.factor(ifelse(predicted_probabilities[, "Forest"] >= threshold, "Forest", "NonForest"))
 
 # Create confusion matrix
-confusion_matrix <- confusionMatrix(predicted_classes, train_data$Class1)
-
-# Get performance metrics
-accuracy <- confusion_matrix$overall['Accuracy']
-Specificty  <- confusion_matrix$byClass['Specificty']
-sensitivity <- confusion_matrix$byClass['Sensitivity']
-kappa <- confusion_matrix$byClass['kappa']
+confusion_matrix_Best <- confusionMatrix(predicted_classes, validation_data$Class1)
 ```
 
 ```{r}
-confusion_matrix$table
+confusion_matrix_Best$table
 ```
-
-## Visualizing other indicators on a logit model  
-
-Let's run a CV on the logit model (*train data set*) 
 
 
 ```{r}
-set.seed(2512)
-LogitFit<- train(Class1 ~ ., data = train_data, 
-               method = "glm" , 
-               preProcess = c("center"),
-               trControl = ctrl)
-summary(LogitFit)
-LogitFit
+Metrics_Best <- as.data.frame(c(confusion_matrix_Best$byClass,confusion_matrix_Best$overall )) %>%
+   filter(row.names(Metrics) %in% c('Accuracy', 'Sensitivity', 'Specificity', 'Kappa' ))
+  
+
+kable(Metrics_Best)
 ```
 
-> We can visualize the distribution of AUC,  sensitivity & specificity for each sample generated in the CV process
 
-```{r CVAUCfig}
-par(mfrow=c(1,5))
-boxplot(LogitFit$resample$Accuracy, main="Accuracy", 
-        col='#ffffcc',ylim = range(0:1),  frame.plot = FALSE)
-boxplot(LogitFit$resample$Sens, main="Sensitivity", 
-        col='#b3cde3',ylim = range(0:1),  frame.plot = FALSE)
-boxplot(LogitFit$resample$Spec, main="Specificity",
-        col='#ccebc5', ylim = range(0:1), frame.plot = FALSE)
-boxplot(LogitFit$resample$Kappa, main="Kappa",
-        col='#decbe4',ylim = range(0:1),  frame.plot = FALSE)
-boxplot(LogitFit$resample$ROC, main="AUC",
-        col='#fbb4ae', ylim = range(0:1), frame.plot = FALSE)
 
-```
 
 
 
 
 ##  Random Forest
-Random Forest is *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
+
+Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
 
 In the case of regression we average the output over all the decision trees, whereas in classification our final output will be based on the **majority vote** of the individual decision trees. 
 
