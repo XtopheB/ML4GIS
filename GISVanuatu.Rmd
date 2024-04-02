@@ -576,13 +576,12 @@ ctrl <- trainControl(method = "repeatedcv",
                      classProbs = TRUE,
                      summaryFunction = sixStats)
 
-
+#
 ```
 
 
-> We may refer to the `r caret` [package manual](https://topepo.github.io/caret/model-training-and-tuning.html) to learn about all the options and models available. The algorithm that will be conducted all along this exercise is the following ![](https://topepo.github.io/caret/premade/TrainAlgo.png)
-
-
+> We may refer to the *caret* [package manual](https://topepo.github.io/caret/model-training-and-tuning.html) to learn about all the options and models available. The algorithm that will be conducted all along this exercise is the following:
+![](https://topepo.github.io/caret/premade/TrainAlgo.png)
 
 ## Logistic model 
 
@@ -598,16 +597,14 @@ Logit_pred <- train(Class1 ~ . , data = train_data,
 ### The *in sample* performance:
 We have some information on how the models performed on the **training** data set.  
 
-```{r}
+```{r, results= TRUE}
 # This recalled the model we just have ran 
 Logit_pred
 ```
 
-
-
 The results show that some variables are colinear (singularities)
 
-```{r}
+```{r, results= TRUE}
 summary(Logit_pred)
 ```
 
@@ -631,7 +628,7 @@ boxplot(Logit_pred$resample$ROC, main="AUC",
 
 ```
 
-#### The *Out of sample*  performance 
+### The *Out of sample*  performance 
 
 Now that our model has been estimated, we can compute some performance indicators on the validation set (*Out of sample* data set) that has not been used for the estimation.  
 
@@ -662,9 +659,11 @@ accuracy <- round(as.numeric(confusion_matrix$overall['Accuracy']), 2)
 # sensitivity <- confusion_matrix$byClass['Sensitivity']
 # kappa <- confusion_matrix$overall['kappa']
 ```
- The accuracy is **`r accuracy`** . We can compute some other indicators of interest. 
+ The accuracy is **`r accuracy`** . We can compute some other indicators of interest as well. 
 ```{r, results=TRUE}
-Metrics <- as.data.frame(c(confusion_matrix$byClass,confusion_matrix$overall )) %>%
+Metrics <- as.data.frame(c(confusion_matrix$byClass,confusion_matrix$overall ))
+
+Metrics <-  Metrics %>%
    filter(row.names(Metrics) %in% c('Accuracy', 'Sensitivity', 'Specificity', 'Kappa' ))
   
 
@@ -781,8 +780,10 @@ confusion_matrix_Best$table
 
 
 ```{r}
-Metrics_Best <- as.data.frame(c(confusion_matrix_Best$byClass,confusion_matrix_Best$overall )) %>%
-   filter(row.names(Metrics) %in% c('Accuracy', 'Sensitivity', 'Specificity', 'Kappa' ))
+Metrics_Best <- as.data.frame(c(confusion_matrix_Best$byClass,confusion_matrix_Best$overall ))
+
+Metrics_Best <- Metrics_Best %>%
+   filter(row.names(Metrics_Best) %in% c('Accuracy', 'Sensitivity', 'Specificity', 'Kappa' ))
   
 
 kable(Metrics_Best)
