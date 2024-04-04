@@ -4,6 +4,7 @@ subtitle: "Random Forest Model on GIS file extracted"
 author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
+  pdf_document: default
   html_document:
     code_folding: show
     toc: yes
@@ -11,7 +12,6 @@ output:
     highlight: tango
     number_sections: no
     theme: lumen
-  pdf_document: default
   word_document: default
 ---
 
@@ -63,7 +63,7 @@ SIAP.red <- "#eb4034"
 ```{r}
 # Importing Shapefile 
 
-
+#  ----- TODO ------
 
 ```
 
@@ -88,12 +88,14 @@ DataForModel$class <- as.factor(DataForModel$class)
 ```
 
 
-```{r}
+### Summary statistics
+
+```{r, results=TRUE}
 datasummary_skim(DataForModel , type = "categorical"  )
 ```
 
 
-```{r}
+```{r, results=TRUE}
 datasummary_skim(DataForModel , type = "numeric"  )
 ```
 
@@ -105,7 +107,7 @@ corr_coef<-cor(DataForModel[,2:6], use = "p")
 
 #And then plot it with nice options 
 ggcorrplot(corr_coef, 
-           type = "lower",         # lower triangle of the matrix only
+           # type = "lower",         # lower triangle of the matrix only
            hc.order = TRUE,        # variable sorted from highest to lowest
            outline.col = "white",  #Color options
            lab = TRUE)
@@ -128,7 +130,8 @@ validation_data  <- DataForModel[-trainIndex,]
 
 ```
 
-It is important to have a look at our train data set and check if it has the same characteristics. 
+
+We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories repartition.  
 
 ```{r,  results= TRUE }
 datasummary_skim(train_data , type = "categorical"  )
@@ -142,7 +145,8 @@ datasummary_skim(train_data , type = "categorical"  )
 anyNA(train_data)
 ```
 
-> Two options there: 
+> We have mmissing values for some variables.  Two options there:
+
 - Impute some values in the training data set
 - Revove all rows with NAs
 
@@ -153,8 +157,6 @@ anyNA(train_data)
 train_data <- na.omit(train_data)
 validation_data <- na.omit(validation_data)
 ```
-
-
 
 
 The data preparation & validation methods ends here, so let’s process to machine learning models.
@@ -221,11 +223,11 @@ ctrl <- trainControl(method = "repeatedcv",
 
 ##  Random Forest
 
+We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
+
 Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
 
-In the case of regression we average the output over all the decision trees, whereas in classification our final output will be based on the **majority vote** of the individual decision trees. 
-
-We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
+Our final output will be based on the **majority vote** of the individual decision trees. 
 
 
 ```{r, include = FALSE}
@@ -248,7 +250,7 @@ set.seed(2512)
 # Training this model takes a few minutes
 rf_fit <- train(class ~ .,
                   data = train_data,
-                  na.action = na.omit,  # We may have some missing due to the small sample 
+                 # na.action = na.omit,  # Not needed if missing removed
                   method = "rf",
                   trControl = K5_CV_seed)
 ```
@@ -259,20 +261,20 @@ rf_fit
 
 ## Evaluating Model Performance 
 
-We can also assess the decision trees both *in sample*, that is how well the model estimates the data within the training dataset  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
+We can assess the quality of the model both *in sample*, that is how well the model estimates the data within the training data set  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
 
 #### The *in sample* performance is:
 
 ```{r, results=TRUE}
 rf_pred <- predict(rf_fit, train_data)
-length(rf_pred)
+# length(rf_pred)
 
 # Since there are missing values, rf_pred is smaller than train_data
 # Confusion, matricx cnnot be computed
  confusionMatrix(rf_pred, train_data$class)
 ```
 
-We need now further investigation to see if the model generalizes well or if it just has learned from the training data. 
+We need now further investigation to see if the model generalizes well or if it just has learned from the training data. The high accuracyis a symptom of overfitting.
 
 ### The *Out of sample* performance 
 
@@ -282,9 +284,9 @@ rf_pred_Valid <- predict(rf_fit, validation_data)
 confusionMatrix(rf_pred_Valid, validation_data$class)
 ```
 
-### Results on the validation sample
+### Predicted classification on the validation sample
 
-```{r}
+```{r, results=TRUE}
 table(rf_pred_Valid)
 ```
 
@@ -296,13 +298,13 @@ table(rf_pred_Valid)
 ## Optimizing the combinations of variables 
 
 > A trick is to begin to optimize the random forest on our training process first. 
-This may end up saving us a lot of training time. 
 
-We therefore begin by tuning the **number of possible variables** considered at each split in a decision tree by tuning the *mtry* hyperparameter. We do a grid search and compute the accuracy for each value of *mtry* $\in \{0,8\}$.
+
+We therefore begin by tuning the **number of possible variables** (*mtry*)   considered at each split in a decision tree. We do a grid search and compute the accuracy for each value of *mtry* $\in \{0,6\}$.
 
 ```{r, cache = TRUE}
 # /!\ running this chunk can be long!
-tunegrid <- expand.grid(.mtry = (1:8)) 
+tunegrid <- expand.grid(.mtry = (1:6)) 
 
 rf_gridsearch <- train(class ~ ., 
                        data = train_data,
@@ -338,7 +340,7 @@ ggplot(data=rf_gridsearch$results, aes(y = Kappa, x = mtry )) +
   theme_minimal()
 ```
 
-
+> **TBC!** 
 
 ```{r, exit}
 knitr::knit_exit()
