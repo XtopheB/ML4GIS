@@ -149,6 +149,26 @@ DataForModel <- DataForModel %>%
 
 ```{r, results=TRUE}
 datasummary_skim(DataForModel , type = "categorical"  )
+
+```
+
+
+```{r, results=TRUE}
+# We need to reorder the categories based on counts
+counts <- DataForModel %>%
+  count(class) %>%
+  arrange(n)  # Sort counts in ascending order
+
+# Reorder the categories based on counts
+DataForModel$class<- factor(DataForModel$class, levels = counts$class)
+
+ggplot(DataForModel , aes(x = class)) +
+  geom_bar(fill = "skyblue") +
+  labs(title = "Counts of observations by classes", x = "Category", y = "Count") +
+  theme_minimal() +
+  coord_flip()
+  
+  
 ```
 
 
@@ -156,6 +176,7 @@ datasummary_skim(DataForModel , type = "categorical"  )
 datasummary_skim(DataForModel , type = "numeric"  )
 ```
 
+> We observe that some values for the red, green and blue bads are really high (skewed distributions); It could be interesting to trim these values (not done here yet) 
 
 
 ```{r}
@@ -169,6 +190,7 @@ ggcorrplot(corr_coef,
            outline.col = "white",  #Color options
            lab = TRUE)
 ```
+ The correlation between the bands values is quite high, this is probably due to the fact that we observe a lot spaces with the same "color", and so with same mix of red, green and blue. This is related to the imbalance of the categories in our sample (see the repartition above). 
 
 ### Missing values
 
@@ -225,7 +247,7 @@ The data preparation & validation methods ends here, so let’s process to machi
 ###  Selecting  Cross Validation parameters
 
 ```{r, include = FALSE, echo = FALSE}
-# function to set up random seeds when running on several cores (parralel )
+# function to set up random seeds when running on several cores (parallel )
 #  (you do not need to understand that)
 
 setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 1237) {
@@ -310,7 +332,8 @@ set.seed(2512)
 
 # Training this model takes a few minutes
 rf_fit <- train(class ~ .,
-                  data = train_data,
+                  data = train_data, 
+                  # preProcess = TRUE,  # centering and scaling variables  (can be dangerous with skewed variables)
                   na.action = na.omit,  # Not needed if missing removed
                   method = "rf",
                   trControl = K5_CV_seed)
@@ -349,6 +372,7 @@ GISVarImportance<- varImp(rf_fit, scale = FALSE)
 plot(GISVarImportance)
 
 ```
+> It is interesting to see that latitude (and longitude) play a role in the prediction. My guess is that this works because we are estimating on one island and there may be more of the dominant categories (forests) in the north or south (or east or west for longitude).
 
 ### The *Out of sample* performance 
 
@@ -380,7 +404,6 @@ results$byClass
 ```{r, results=TRUE}
 table(rf_pred_Valid)
 ```
-
 
 
 # Optimizing Random Forests
