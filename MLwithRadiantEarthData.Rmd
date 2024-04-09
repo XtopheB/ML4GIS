@@ -1,0 +1,468 @@
+---
+title: "Using Radiant Earth Data for Land Cover Estimation "
+subtitle: "Machine Learning Models with Python extracted files"
+author: "Christophe Bontemps (SIAP)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: true
+    highlight: tango
+    number_sections: no
+    theme: united
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( message = FALSE, warning = FALSE, results = TRUE, echo = TRUE) 
+```
+
+# Installing the packages
+
+```{r packages,  results = FALSE}
+# File management
+library(readxl)
+
+
+# GIS packages
+library(raster) ## for reading "RASTER" files
+library(rgdal)  ## for reading "shapefiles"
+library(sp)     ## for adjusting CRS in 
+library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r
+
+# Tidy data management packages
+library(dplyr)
+# library(tidyverse)
+library(data.table)
+library(modelsummary)
+library(ggcorrplot)
+
+# Model fitting packages for ML
+library(rpart)
+library(caret)
+
+
+# Plotting packages
+library(ggplot2)
+library(RColorBrewer)
+
+# Nice presentation of results
+library(knitr)
+library(papeR)
+
+# My colors:
+SIAP.color <- "#0385a8"
+SIAP.red <- "#eb4034"
+
+```
+
+# Data 
+We have two data sets: 
+
+- **5. sample_plot_measurements.xlsx** from VBoS (3047 points)
+- **X_vanuatu_points_data.xlsx** from Radiant Earth zip file (2014 points)
+
+VBoS file  has the classification of points into different levels of land, while the data set from radiant Earth is the extraction of the satellite images (bands) information for each point. The problem is that there is no common identifier for these two files to merge, we'll need to use latitude and longitude **BUT** VBoS file has not the correct latitude and longitude.
+
+> So we'll use **modified_dataset.xlsx** (3048 points) with validated latitude and longitude (corrected in Colab)  instead of VBoS original file. 
+
+##  Data collection and merging 
+
+### Radiant Earth data (our explanatory variables ) 
+
+```{r}
+# Radiant earth Data set
+ Xdata <-  read_xlsx ("Data/X_vanuatu_points_data.xlsx")
+
+# extracting lat and long
+ 
+Xdata$longitude <- as.numeric(sub("POINT \\((\\S+) .+", "\\1", Xdata$geometry))
+Xdata$latitude <- as.numeric(sub("POINT \\(\\S+ (.+)\\)", "\\1", Xdata$geometry))
+nrow(Xdata)
+
+```
+
+### Corrected files from Python (our classification variable) 
+
+
+```{r}
+# Coorected point
+ Ydata <-  read_xlsx ("Data/modified_dataset.xlsx")
+
+# renaming  lat and long
+
+Ydata <- Ydata %>%
+  rename(latitude  = adjusted_valid_latitude,
+         longitude = adjusted_valid_longitude, 
+         idY = id    ) %>%      # for double check
+  select( -c( general_information_coordinate_of_the_center_x,
+              general_information_coordinate_of_the_center_y, Excluded))
+
+nrow(Ydata)
+
+```
+
+### Merging  
+
+```{r}
+DataForModel <- merge(Ydata, Xdata, by = c("latitude", "longitude"), all.x = FALSE)
+
+# check that id coincide --> same ids for different points in each data set ;-( , but diff should be 0 
+DataForModel <- DataForModel %>%
+  mutate(Diff = id - idY) 
+# summary(DataForModel$Diff)
+
+nrow(DataForModel)
+```
+
+
+###  Removing duplicated rows 
+```{r}
+nrow(unique(DataForModel))
+DataForModel <- DataForModel %>%
+  distinct()
+
+```
+We now have **`r nrow(DataForModel)`** distinct observations 
+
+
+### Adjusting and preparing the data set for model 
+
+```{r}
+# Third variable is strange
+DataForModel <- DataForModel[, -3]
+# Cleaning                             
+DataForModel <- DataForModel %>%
+  select(-c(id, idY, sample_plot_nr, partial_plot, geometry, Diff)) %>%
+  select(-c(vegetation_type_l1, vegetation_type_l3)) %>%
+  mutate( class  = as.factor(class))
+
+DataForModel <- DataForModel %>%
+  mutate_if(is.character, as.numeric)
+
+```
+
+
+### Summary statistics
+
+```{r, results=TRUE}
+datasummary_skim(DataForModel , type = "categorical"  )
+```
+
+
+```{r, results=TRUE}
+datasummary_skim(DataForModel , type = "numeric"  )
+```
+
+
+
+```{r}
+# We compute the correlation matrix of the covariates
+corr_coef<-cor(DataForModel %>% select( c(blue, red, green, swir16, swir22)), use = "p")
+
+#And then plot it with nice options 
+ggcorrplot(corr_coef, 
+            type = "lower",         # lower triangle of the matrix only
+           hc.order = TRUE,        # variable sorted from highest to lowest
+           outline.col = "white",  #Color options
+           lab = TRUE)
+```
+
+### Missing values
+
+Checking if there are missing values in our data set (clouds! )
+
+```{r}
+# counting missing values for each variable 
+colSums(is.na(DataForModel))
+
+```
+
+> We have mmissing values for exlanatory  variables.  Two options there:
+
+- Impute some values in the  data set
+- Remove all rows with NAs
+
+> We opt for doing NOTHING since we can alwauys have latitude and logitude as explanatory variables! 
+
+
+```{r}
+# option two: remove NAs both from training and validation sets
+ # DataForModel<- na.omit(DataForModel)
+```
+
+# Machine Learning models
+
+## Train and Validation data sets
+
+```{r }
+# Splits data into training and testing sets
+set.seed(2512)
+# We'll randomly pick some observation from the full data set
+
+trainIndex <- createDataPartition(DataForModel$class, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# Creating the two data sets: 
+train_data <- DataForModel[ trainIndex,]
+validation_data  <- DataForModel[-trainIndex,]
+
+```
+
+
+We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories repartition.  
+
+```{r,  results= TRUE }
+datasummary_skim(train_data , type = "categorical"  )
+```
+
+
+The data preparation & validation methods ends here, so let’s process to machine learning models.
+
+###  Selecting  Cross Validation parameters
+
+```{r, include = FALSE, echo = FALSE}
+# function to set up random seeds when running on several cores (parralel )
+#  (you do not need to understand that)
+
+setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 1237) {
+  #B is the number of resamples and integer vector of M (numbers + tune length if any)
+  B <- if (method == "cv") numbers
+  else if(method == "repeatedcv") numbers * repeats
+  else NULL
+  
+  if(is.null(length)) {
+    seeds <- NULL
+  } else {
+    set.seed(seed = seed)
+    seeds <- vector(mode = "list", length = B)
+    seeds <- lapply(seeds, function(x) sample.int(n = 1000000, size = numbers + ifelse(is.null(tunes), 0, tunes)))
+    seeds[[length(seeds) + 1]] <- sample.int(n = 1000000, size = 1)
+  }
+  # return seeds
+  seeds
+}
+
+```
+
+```{r}
+# Summary fucntion with six statistics of interest 
+sixStats <- function(...) c(twoClassSummary(...), 
+                            defaultSummary(...))
+```
+
+By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specifiy the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
+
+```{r controls}
+
+# control variables (see later)
+K <- 5
+repeats <- 10
+rcvTunes <- 1 # tune number of models
+seed <- 2512
+
+# repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                     numbers = K, 
+                     repeats = repeats,
+                     tunes = rcvTunes, 
+                     seed = seed)
+
+# Controls for Cross Validation
+ctrl <- trainControl(method = "repeatedcv",
+                     number = K, 
+                     repeats = repeats,
+                     seeds = rcvSeeds,
+                     classProbs = TRUE,
+                     summaryFunction = sixStats)
+
+```
+
+
+##  Random Forest
+
+We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
+
+Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
+
+Our final output will be based on the **majority vote** of the individual decision trees. 
+
+
+```{r, include = FALSE}
+# Repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                      numbers = 5, repeats = 5, 
+                      tunes = 100, seed = 777)
+
+# Configure the trainControl argument for cross-validation
+K5_CV_seed <- trainControl(method = "cv", number = 5, classProbs = FALSE, 
+                           savePredictions = TRUE, seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+```
+
+
+```{r, cache = TRUE}
+set.seed(2512)
+
+# Training this model takes a few minutes
+rf_fit <- train(class ~ .,
+                  data = train_data,
+                  na.action = na.omit,  # Not needed if missing removed
+                  method = "rf",
+                  trControl = K5_CV_seed)
+```
+
+
+## Evaluating Model Performance 
+
+We can assess the quality of the model both *in sample*, that is how well the model estimates the data within the training data set  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
+
+### The *in sample* performance is:
+
+```{r, results=TRUE}
+rf_fit
+
+```
+```{r}
+rf_pred <- predict(rf_fit, train_data)
+# length(rf_pred)
+```
+
+> Problem with confusion matrix since the model was not able to compute for missing observations 
+
+```{r, results=TRUE}
+# Since there are missing values, rf_pred is smaller than train_data
+# Confusion, matrix cannot be computed
+ # confusionMatrix(rf_pred, train_data$class)
+```
+
+We need now further investigation to see if the model generalizes well or if it just has learned from the training data. The high accuracyis a symptom of overfitting.
+
+####  Variable importance
+
+```{r}
+GISVarImportance<- varImp(rf_fit, scale = FALSE)
+plot(GISVarImportance)
+
+```
+
+### The *Out of sample* performance 
+
+> We compute the fit on the validation set with removed missing (to get the confusion matrix), 
+
+```{r, results=TRUE}
+non_missing_validation <- na.omit(validation_data)
+rf_pred_Valid <- predict(rf_fit, non_missing_validation)
+```
+
+### Confusion matrix
+
+```{r, results=TRUE}
+ results <- confusionMatrix(rf_pred_Valid, non_missing_validation$class)
+as.table(results )
+```
+### Overall prediction results
+```{r}
+round(results$overall[1:2], 3)
+```
+###  Complete results by class
+```{r}
+results$byClass
+```
+
+
+### Predicted classification on the validation sample
+
+```{r, results=TRUE}
+table(rf_pred_Valid)
+```
+
+
+
+# Optimizing Random Forests
+
+
+## Optimizing the combinations of variables 
+
+> A trick is to begin to optimize the random forest on our training process first. 
+
+
+We therefore begin by tuning the **number of possible variables** (*mtry*)   considered at each split in a decision tree. We do a grid search and compute the accuracy for each value of *mtry* $\in \{0,6\}$.
+
+
+> **TBC** 
+
+```{r}
+knitr::knit_exit()
+```
+
+```{r, cache = TRUE}
+# /!\ running this chunk can be long!
+tunegrid <- expand.grid(.mtry = (1:6)) 
+
+# Pb with NA again  
+rf_gridsearch <- train(class ~ ., 
+                       data = train_data,
+                       method = 'rf',
+                       metric = 'accuracy',
+                       tuneGrid = tunegrid,
+                       ntree = 100)
+
+```
+
+
+
+```{r, results=TRUE}
+print(rf_gridsearch)
+```
+
+
+```{r mtryANDaccuracy}
+ggplot(data=rf_gridsearch$results, aes(Accuracy, x = mtry)) +
+  geom_line( colour = SIAP.color)+
+  geom_point(colour = "grey")+
+  ggtitle(label = "Optimizing the accuracy of the trained random forest model") +
+  labs(x = "Nb of variables considered at each split (mtry)" )+
+  theme_minimal()
+```
+
+```{r mtryANDkappa}
+ggplot(data=rf_gridsearch$results, aes(y = Kappa, x = mtry )) +
+  geom_line(color= SIAP.red)+
+  geom_point(colour = "grey")+
+  ggtitle(label = "Optimizing the Kappa of the trained random forest model") +
+  labs(x = "Nb of variables considered at each split (mtry)" )+
+  theme_minimal()
+```
+
+> **TBC!** 
+
+```{r, exit}
+knitr::knit_exit()
+```
+
+
+
+
+### Accuracy rate and confusion Matrix {-}
+
+```{r, results = TRUE}
+myRandomForest
+
+```
+
+
+### Variable importance plot as in Figure 12 
+
+```{r}
+varImpPlot(myRandomForest, 
+           type = 1,
+           main =" Importance Plot for Random Forest Model")
+```
+
+
+
