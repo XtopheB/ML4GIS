@@ -1,6 +1,6 @@
 ---
 title: "Machine Learning for GIS and Land Cover Estimation "
-subtitle: "Random Forest Model on GIS file (extracted from Blanca)"
+subtitle: "Random Forest Model on GIS file (extracted by Blanca)"
 author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -63,14 +63,20 @@ SIAP.red <- "#eb4034"
 
 ```{r}
 # data directly exported from Jupyter notebook 
-DataForModel <- read.csv("Data/Dataset_for_model_wkt.csv")
+# DataForModel <- read.csv("Data/Dataset_for_model_wkt.csv")
+DataForModel <- read.csv("Data/Dataset_for_model_WGS84.csv")
+
+
 
 ```
 
 ```{r}
 # Formatting and removing variables
 DataForModel <-DataForModel %>%
-  select(-c("VALUE", "x", "y", "SpatialRef", "geometry"))
+  select(-c("VALUE",  "SpatialRef", "geometry"))
+
+DataForModel <-DataForModel %>%
+  select(-c("VALUE",  "SpatialRef", "geometry"))
 
 # Change class to right format (factor)
 DataForModel$class <- as.factor(DataForModel$class)  
@@ -115,9 +121,9 @@ datasummary_skim(DataForModel , type = "numeric"  )
 ```{r}
 library(OpenStreetMap)
 
-upperLeft = c(-max(DataForModel$y), min(DataForModel$x))
-
-lowerRight = c(min(DataForModel$y), max(DataForModel$x))
+# upperLeft = c(-max(DataForModel$y), min(DataForModel$x))
+# 
+# lowerRight = c(min(DataForModel$y), max(DataForModel$x))
 
 #base_map  = openmap(upperLeft, lowerRight, type="osm")
 
@@ -175,7 +181,7 @@ validation_data  <- DataForModel[-trainIndex,]
 ```
 
 
-We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories repartition.  
+We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories distribution.  
 
 ```{r,  results= TRUE }
 datasummary_skim(train_data , type = "categorical"  )
@@ -189,7 +195,7 @@ datasummary_skim(train_data , type = "categorical"  )
 anyNA(train_data)
 ```
 
-> We do **not**  have missing values for some variables. 
+> We do **not**  have missing values for any variables. 
 
 The data preparation & validation methods ends here, so let’s process to machine learning models.
 
@@ -225,7 +231,7 @@ sixStats <- function(...) c(twoClassSummary(...),
                             defaultSummary(...))
 ```
 
-By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specifiy the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
+By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specify the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
 
 ```{r controls}
 
@@ -271,11 +277,12 @@ set.seed(2512)
 
 # Training this model takes a few minutes
 rf_fit <- train(class ~ .,
-                  data = train_data,
+                 data = train_data,
                  # na.action = na.omit,  # Not needed if missing removed
                   method = "rf",
                   trControl = K5_CV_seed)
 ```
+
 
 ```{r, results=TRUE}
 rf_fit
@@ -295,9 +302,10 @@ rf_pred <- predict(rf_fit, train_data)
  confusionMatrix(rf_pred, train_data$class)
 ```
 
+
 We need now further investigation to see if the model generalizes well or if it just has learned from the training data. The high accuracyis a symptom of overfitting.
 
-## Variable importnace
+## Variable importance
 ```{r}
 GISVarImportance<- varImp(rf_fit, scale = FALSE)
 plot(GISVarImportance)
