@@ -63,20 +63,18 @@ SIAP.red <- "#eb4034"
 
 ```{r}
 # data directly exported from Jupyter notebook 
-# DataForModel <- read.csv("Data/Dataset_for_model_wkt.csv")
-DataForModel <- read.csv("Data/Dataset_for_model_WGS84.csv")
-
-
+DataForModel <- read.csv("Data/Dataset_for_model_wkt.csv")
+# DataForModel <- read.csv("Data/Dataset_for_model_WGS84-B.csv")
 
 ```
 
 ```{r}
 # Formatting and removing variables
 DataForModel <-DataForModel %>%
-  select(-c("VALUE",  "SpatialRef", "geometry"))
+  select(-c("VALUE", "x", "y" ,"SpatialRef", "geometry"))
 
-DataForModel <-DataForModel %>%
-  select(-c("VALUE",  "SpatialRef", "geometry"))
+# DataForModel <-DataForModel %>%
+#   select(-c("VALUE"))
 
 # Change class to right format (factor)
 DataForModel$class <- as.factor(DataForModel$class)  
@@ -111,23 +109,27 @@ datasummary_skim(DataForModel , type = "categorical"  )
 ```
 
 
-```{r, results=TRUE}
+```{r, results=TRUE, echo=TRUE}
 datasummary_skim(DataForModel , type = "numeric"  )
 ```
 
-### Maps
 
+# Explanatory variables analysis
+
+## Maps 
+
+>  This can be done later. Here we leave this to  QGIS  
 
 ```{r}
-library(OpenStreetMap)
-
-# upperLeft = c(-max(DataForModel$y), min(DataForModel$x))
+# library(OpenStreetMap)
 # 
-# lowerRight = c(min(DataForModel$y), max(DataForModel$x))
-
-#base_map  = openmap(upperLeft, lowerRight, type="osm")
-
-# plot(base_map)
+#  upperLeft = c(-max(DataForModel$lat), min(DataForModel$long))
+# # 
+#  lowerRight = c(min(DataForModel$lat), max(DataForModel$long))
+# 
+# base_map  = openmap(upperLeft, lowerRight, type="osm")
+# 
+#  plot(base_map)
 
 ```
 
@@ -148,9 +150,6 @@ library(OpenStreetMap)
 
 
 
-
-### Explanatory variables analysis
-
 ```{r}
 # We compute the correlation matrix of the covariates
 corr_coef<-cor(DataForModel[,2:12], use = "p")
@@ -163,14 +162,18 @@ ggcorrplot(corr_coef,
            lab = TRUE)
 ```
 
+
+The data preparation & validation methods ends here, so let’s process to machine learning models.
+
+# Machine learning
 ## Train and Validation data sets
 
 ```{r }
 # Splits data into training and testing sets
-set.seed(2512)
+set.seed(007)
 # We'll randomly pick some observation from the full data set
 
-trainIndex <- createDataPartition(DataForModel$class, p = .8, 
+trainIndex <- createDataPartition(DataForModel$class, p = .80, 
                                   list = FALSE, 
                                   times = 1)
 
@@ -197,15 +200,14 @@ anyNA(train_data)
 
 > We do **not**  have missing values for any variables. 
 
-The data preparation & validation methods ends here, so let’s process to machine learning models.
 
-###  SelectingCross Validation parameters
+##  Selecting Cross Validation parameters
 
 ```{r, include = FALSE, echo = FALSE}
 # function to set up random seeds when running on several cores 
 #  (you do not need to understand that)
 
-setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 1237) {
+setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 2512) {
   #B is the number of resamples and integer vector of M (numbers + tune length if any)
   B <- if (method == "cv") numbers
   else if(method == "repeatedcv") numbers * repeats
@@ -227,8 +229,8 @@ setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed
 
 ```{r}
 # Summary function with six statistics of interest 
-sixStats <- function(...) c(twoClassSummary(...), 
-                            defaultSummary(...))
+# sixStats <- function(...) c(twoClassSummary(...), 
+#                             defaultSummary(...))
 ```
 
 By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specify the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
@@ -272,14 +274,14 @@ K5_CV_seed <- trainControl(method = "cv",
 ```
 
 
-```{r, cache = TRUE}
-set.seed(2512)
+```{r, cache = FALSE}
 
 # Training this model takes a few minutes
 rf_fit <- train(class ~ .,
                  data = train_data,
                  # na.action = na.omit,  # Not needed if missing removed
                   method = "rf",
+                  ntree = 100,
                   trControl = K5_CV_seed)
 ```
 
@@ -292,7 +294,7 @@ rf_fit
 
 We can assess the quality of the model both *in sample*, that is how well the model estimates the data within the training data set  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
 
-#### The *in sample* performance is:
+## The *in sample* performance is:
 
 ```{r, results=TRUE}
 rf_pred <- predict(rf_fit, train_data)
@@ -305,15 +307,14 @@ rf_pred <- predict(rf_fit, train_data)
 
 We need now further investigation to see if the model generalizes well or if it just has learned from the training data. The high accuracyis a symptom of overfitting.
 
-## Variable importance
+### Variable importance
 ```{r}
 GISVarImportance<- varImp(rf_fit, scale = FALSE)
 plot(GISVarImportance)
 ```
 
 
-
-### The *Out of sample* performance 
+## The *Out of sample* performance 
 
 
 ```{r, results=TRUE}
@@ -326,11 +327,7 @@ confusionMatrix(rf_pred_Valid, validation_data$class)
 ```{r, results=TRUE}
 table(rf_pred_Valid)
 ```
-
-
-
 # Optimizing Random Forests
-
 
 ## Optimizing the combinations of variables 
 
@@ -377,30 +374,81 @@ ggplot(data=rf_gridsearch$results, aes(y = Kappa, x = mtry )) +
   theme_minimal()
 ```
 
-> **TBC!** 
-
-```{r, exit}
-knitr::knit_exit()
-```
+# Predicting
 
 
-
-
-### Accuracy rate and confusion Matrix {-}
-
-```{r, results = TRUE}
-myRandomForest
-
-```
-
-
-### Variable importance plot as in Figure 12 
+## Importing CSV data to predict from QGIS (Raster image)
+We use the data from the whole area (each pixel) and predict on these. 
 
 ```{r}
-varImpPlot(myRandomForest, 
-           type = 1,
-           main =" Importance Plot for Random Forest Model")
+# data directly exported from Jupyter notebook 
+QGISDataAllArea <- read.csv("Data/pixels4pred_AllArea_ptsBANDS_wkt.csv")
+
 ```
 
+```{r}
+# Formatting and removing variables
+DataForPrediction <- QGISDataAllArea %>%
+  select(-c("cClassSCP", "x", "y", "nClassSCP","SpatialRef", "geometry"))
+
+```
+
+## Predicting using our model 
+
+```{r}
+rf_pred_Full <- predict(rf_fit, DataForPrediction)
+```
+
+
+```{r}
+DataPredicted <- as.data.frame(cbind(rf_pred_Full, DataForPrediction))
+DataPredicted <- DataPredicted %>% 
+  mutate(PredictedClass = rf_pred_Full)
+
+```
+
+
+```{r}
+kable(DataPredicted)
+```
+
+### Exporting to QGIS
+
+```{r}
+# Adding spatial component to Data used for prediction
+PredictionForQGIS <- cbind(DataPredicted,QGISDataAllArea %>%
+  select(c("cClassSCP", "x", "y", "nClassSCP","SpatialRef", "geometry")) )
+
+# Exporting Data for QGIS
+write.csv(PredictionForQGIS, file = "Data/PredictionForQGIS.csv")
+
+```
+
+
+## Statistics on the prediction
+
+```{r}
+# Number of obs. per class
+counts <- DataPredicted %>%
+  count(PredictedClass) %>%
+  arrange(n)  # Sort counts in ascending order
+
+# Reorder the categories based on counts
+DataPredicted$PredictedClass<- factor(DataPredicted$PredictedClass, levels = counts$PredictedClass)
+
+# Graphic
+DataPredicted %>%
+ggplot() + 
+  geom_bar(aes(y = PredictedClass), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "") +
+  ggtitle("Land types ")
+```
+
+
+```{r, results=TRUE}
+datasummary_skim(DataPredicted$PredictedClass , type = "categorical"  )
+```
 
 
