@@ -111,6 +111,7 @@ geom_sf(aes(color = Land),  alpha = 0.5) +
 ```
 
 #### With a basemap
+There is something wrong with the coordinates that *sf* doesn't convert well. TBC
 
 ```{r}
 library(ggspatial)
@@ -130,10 +131,10 @@ ggplot() +
   labs(title = "Map with Spatial Data Overlay", x = "Longitude", y = "Latitude")
 ```
 
-### Spatial representation of  points from QGIS  with Latitude and longitude 
+### Spatial representation of points from QGIS  with Latitude and longitude 
 
 
-```{r}
+```{r, results='asis'}
 library(leaflet)
 
 # If you want to set your own colors manually:
@@ -146,7 +147,7 @@ pal <- colorFactor(
 # Base map using leaflet with your data frame
 m <- leaflet() %>%
   addTiles() %>%
-  addCircleMarkers(data = DataForModelLAT,label = 
+  addCircleMarkers(data = DataForModelLAT, 
                    label = c("Barez soil", "Built-up", "Reef", "Vegetation", "Water") ,
                    lng = ~long, 
                    lat = ~lat, 
@@ -158,31 +159,32 @@ m
 
 
 ```{r}
-library(ggspatial)
-library(ggmap)
-
-
-# Define the bounding box for Vanuatu [min long, min lat, max long, max lat]
-vanuatu_bbox <- c(168.30470, -17.72838, 168.31418 ,-17.71909 )
-
-# # Get the map from Google Maps using ggmap
-# vanuatu_map <- get_map(center = c(lon =168.3094 , lat = -17.72374 ),
-#                        zoom = 8, maptype = "terrain")
-
-# Get the map from OpenStreetMap using ggmap
-vanuatu_map <- get_map(location = c(lon = mean(vanuatu_bbox[c(1, 3)]), lat = mean(vanuatu_bbox[c(2, 4)])), 
-                       source = "osm", zoom = 8)
-
-# Plot the map with points
-ggmap(vanuatu_map) +
-  geom_point(data = DataForModelLAT_vanuatu, aes(x = long, y = lat), color = "red") +
-  theme_void()
-
-
-# Plot the map with points
-ggmap(vanuatu_map) +
-  geom_point(data = DataForModelLAT, aes(x = long, y = lat), color = "red") +
-  theme_void()
+# library(ggspatial)
+# library(ggmap)
+# DOES NOT WORK WITHOUT GOOGL API KEY
+# 
+# 
+# # Define the bounding box for Vanuatu [min long, min lat, max long, max lat]
+# vanuatu_bbox <- c(168.30470, -17.72838, 168.31418 ,-17.71909 )
+# 
+# # # Get the map from Google Maps using ggmap
+# # vanuatu_map <- get_map(center = c(lon =168.3094 , lat = -17.72374 ),
+# #                        zoom = 8, maptype = "terrain")
+# 
+# # Get the map from OpenStreetMap using ggmap
+# vanuatu_map <- get_map(location = c(lon = mean(vanuatu_bbox[c(1, 3)]), lat = mean(vanuatu_bbox[c(2, 4)])), 
+#                        source = "osm", zoom = 8)
+# 
+# # Plot the map with points
+# ggmap(vanuatu_map) +
+#   geom_point(data = DataForModelLAT_vanuatu, aes(x = long, y = lat), color = "red") +
+#   theme_void()
+# 
+# 
+# # Plot the map with points
+# ggmap(vanuatu_map) +
+#   geom_point(data = DataForModelLAT, aes(x = long, y = lat), color = "red") +
+#   theme_void()
 ```
 
 
