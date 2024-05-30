@@ -86,10 +86,12 @@ data_sf <- st_as_sf(DataForModelQGIS, wkt = "geometry", crs = unique(DataForMode
 ```
 
 ```{r}
+LCpalette = c('brown', 'red', 'blue', 'darkgreen', 'darkblue' )
 data_sf %>%
   mutate( Land = as.factor(class)) %>%
 ggplot() +
-geom_sf(aes(color = Land )) +
+geom_sf(aes(color = Land),  alpha = 0.5) +
+  scale_color_manual(values= LCpalette, name = "Land type") +
   theme_minimal() +
   labs(title = "Map from CSV Data", x = "Longitude", y = "Latitude", color = "Category")
 ```
