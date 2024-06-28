@@ -91,21 +91,29 @@ DataForModel <- extract(img, shp, df = TRUE)
 # Creating class for each location 
 # DataForModel$class <- as.factor( shp$class[ match(DataForModel$ID, seq(nrow(shp)) ) ])
 
+# DataForModel$class <- as.factor( shp$class[ match(DataForModel$MC_ID, seq(nrow(shp)) ) ])
+DataForModel$class <- as.factor(shp$MC_ID[match(DataForModel$ID, seq(nrow(shp)))])
 
-DataForModel <- left_join(DataForModel, shp, join_by("ID"=="C_ID")) %>%
-  select(-c("ID", "fid", "C_name", "SCP_UID", "geometry")) %>%
-  mutate(class = as.factor(MC_name))
+
+DataForModel <- DataForModel %>%
+   mutate(classnum = as.numeric(class))
+# 
+# DataForModel <- left_join(DataForModel, shp, join_by("classnum"=="MC_ID"))
+# 
+# 
+# DataForModel <- DataForModel %>%
+#   select(-c("ID", "fid", "C_name", "C_ID", "SCP_UID", "geometry", "class")) %>%
+#   mutate(class = as.factor(MC_name))
 ```
 
-
 ## Summary statistics
-
 
 ```{r}
 datasummary_skim(as.factor(DataForModel$class) , type = "categorical" , 
                  notes = paste("N =", nrow(DataForModel)) )
 
 ```
+
 
 ```{r}
 # keeping the name of the classes
@@ -345,7 +353,7 @@ confusionMatrix(rf_pred_Valid, validation_data$class)
 
 ### Predicted classification on the validation sample
 
-Our validation sample has `r nrow(validation_data)`. Let's see how the prediction goes on these points: 
+Our validation sample has **`r nrow(validation_data)`** observations. Let's see how the prediction goes on these points: 
 
 
 ```{r}
@@ -359,7 +367,7 @@ datasummary_skim(pred_valid , type = "categorical",
 
 # Prediction on the whole area
 
-We now take the whole image and predict on all pixel using the model that we estimated. 
+We now take the whole image and predict on all pixels using the model that we estimated. 
 
 ```{r}
 result <- predict(img,
@@ -372,11 +380,12 @@ result <- predict(img,
 
 
 ```{r,  results= TRUE }
-Table_result <- as.data.frame(result) 
+Table_result <- as.data.frame(result) %>%
+  mutate(class =  as.factor(classification_fromR))
 
-Table_result <- left_join(Table_result, shp, join_by("classification_fromR"=="MC_ID")) %>%
-  mutate(class = as.factor(MC_name)) %>%
- select(-c( "fid", "C_name", "MC_name", "C_ID", "SCP_UID", "geometry")) 
+# Table_result <- left_join(Table_result, shp, join_by("classification_fromR"=="MC_ID")) %>%
+#   mutate(class = as.factor(MC_name)) %>%
+#  select(-c( "fid", "C_name", "MC_name", "C_ID", "SCP_UID", "geometry")) 
 ```
 
 
