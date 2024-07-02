@@ -4,7 +4,6 @@ subtitle: "Random Forest Model on GIS file (extracted by Blanca)"
 author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
-  word_document: default
   html_document:
     code_folding: show
     toc: yes
@@ -12,6 +11,7 @@ output:
     highlight: tango
     number_sections: no
     theme: lumen
+  word_document: default
   pdf_document: default
 ---
 
@@ -404,6 +404,168 @@ ggplot() +
   theme(plot.title = element_text(hjust = 0.5))+ 
   labs(x = "", y = "", subtitle = paste ( "N= ", nrow(Table_result)))  +
   ggtitle("Land types predicted on the whole area ")
+```
+
+## Visualizing the predictions 
+
+
+### Predictions done here (RF in R)
+
+```{r}
+# Load necessary libraries
+library(terra)
+
+
+# Read the TIFF file
+raster_data <- rast("Data/GISBlanca/classification_fromR.tif")
+
+# Convert the raster to a data frame for ggplot2
+raster_df_R <- as.data.frame(raster_data, xy = TRUE)
+
+
+# define the color palette 
+class_colors <- c(
+   "darkgreen",     # Dense vegetation
+  "#DEB887",        # Pastureland/grassland
+  "#339933",        # Other vegetation
+  "#e60000",        # "Built-up", 
+  "darkblue",        # Water
+  "lightblue",      # Reef
+  "darkgrey"            # Cloud
+)
+
+# Define the class labels
+class_labels <- c(
+  "1" = "Dense_vegetation",
+  "2" = "Pastureland_grassland",
+  "3" = "Other_vegetation", 
+  "4" = "Built-up", 
+  "5" = "Water",
+  "6" = "Reef", 
+  "7" = "Cloud"
+)
+
+# Convert raster values to a factor with labels
+raster_df_R$classification_fromR <- factor(raster_df_R$classification_fromR, levels = names(class_labels), labels = class_labels)
+
+# Plot using ggplot2
+p_R <- ggplot() +
+  geom_raster(data = raster_df_R, aes(x = x, y = y, fill = classification_fromR), alpha = 0.5 ) +
+  scale_fill_manual(values = class_colors, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Prediction (with R) ",
+       x = "Longitude",
+       y = "Latitude")
+# Plot
+p_R
+
+```
+
+### Predicitions done in QGIS (RF)
+
+```{r}
+
+# Read the TIFF file
+raster_RF_QGIS <- rast("Data/GISBlanca/R_RF_Classification_2020.tif")
+
+# Convert the raster to a data frame for ggplot2
+raster_df_QGIS <- as.data.frame(raster_RF_QGIS, xy = TRUE)
+
+# Convert raster values to a factor with labels
+raster_df_QGIS$R_RF_Classification_2020 <- factor(raster_df_QGIS$R_RF_Classification_2020, levels = names(class_labels), labels = class_labels)
+
+
+# Plot using ggplot2
+p_QGIS <- ggplot() +
+  geom_raster(data = raster_df_QGIS, aes(x = x, y = y, fill = R_RF_Classification_2020), alpha = 0.5 ) +
+  scale_fill_manual(values = class_colors, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Prediction (with QGIS) ",
+       x = "Longitude",
+       y = "Latitude")
+
+p_QGIS
+
+```
+
+### Visualizing the differences
+
+```{r}
+# Computing the differences
+
+# Merge the data frames on x and y coordinates
+combined_df <- raster_df_R %>%
+  inner_join(raster_df_QGIS, by = c("x", "y")) %>%
+  rename(prediction_R = classification_fromR, prediction_QGIS = R_RF_Classification_2020)
+
+# Create a new column indicating whether the predictions are the same or different
+combined_df <- combined_df %>%
+  mutate(diff = ifelse(prediction_R == prediction_QGIS, "No Change", "Change"))
+
+# Define the colors for the map
+colors <- c("No Change" = "white", "Change" = "pink")
+
+#Plot the map highlighting changes
+p_diff <- ggplot(combined_df, aes(x = x, y = y)) +
+  geom_raster(aes(fill = diff)) +
+  scale_fill_manual(values = colors, name = "Differences") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Differencesin Vegetation Predictions",
+       subtitle = "R predictions vs QGIS predictions",
+       x = "Longitude", y = "Latitude")
+
+p_diff
+
+```
+
+
+```{r}
+# Other way to represent differences- crate a new category
+
+# define the color palette 
+class_colors_C <- c(class_colors, "white")
+# Define the class labels
+class_labels_C <- c(class_labels, "8" = "Difference")
+
+combined_df_C <- combined_df %>%
+  mutate(full = ifelse(prediction_R ==prediction_QGIS, prediction_R, "8"))
+
+# Convert raster values to a factor with labels
+combined_df_C$full <- factor(combined_df_C$full, levels = names(class_labels_C), labels = class_labels_C)
+
+#Plot the map highlighting changes
+p_full <- ggplot(combined_df_C, aes(x = x, y = y)) +
+  geom_raster(aes(fill = full)) +
+ scale_fill_manual(values = class_colors_C, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Differencesin Vegetation Predictions",
+       subtitle = "R predictions vs QGIS predictions",
+       x = "Longitude", y = "Latitude")
+
+p_full
+
+```
+
+
+
+
+```{r}
+library("patchwork")
+# Combine the plots
+# removing the legend for one plot 
+p_R <- p_R + theme(legend.position = "none")
+p_QGIS <- p_QGIS + theme(legend.position = "none")
+p_diff <- p_diff + theme(legend.position = "none")
+p_full <- p_full + theme(legend.position = "bottom")
+
+combined_plot <- (p_R |  p_QGIS) / (p_diff + p_full)  
+
+# Display the combined plot
+print(combined_plot)
 ```
 
 
