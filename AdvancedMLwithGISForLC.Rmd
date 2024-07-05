@@ -72,6 +72,12 @@ library(sf)
 
 img <- brick("Data/GISBlanca/stack_raster123456788A91112_MayJune2020.tif")
 ```
+ 
+These are images taken with different bands and reflecting the nature of waves coming back from the satellite sensors. 
+
+```{r}
+plot(img)
+```
 
 
 ##  b. Importing the shapefiles with  ground truth land classes
@@ -80,7 +86,7 @@ img <- brick("Data/GISBlanca/stack_raster123456788A91112_MayJune2020.tif")
 # Importing Shapefiles
 shp <- read_sf("Data/GISBlanca/reference_dataset_ROIs/")
 
-# extract classes and band information and put in a dataframe
+# extract classes and band information and put in a dataframe for later
 names(img) <- c("b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b8A", "b9", "b11", "b12")
 ```
 
@@ -194,6 +200,8 @@ ggcorrplot(corr_coef,
 The data preparation & validation methods ends here, so let’s process to machine learning models.
 
 # Machine learning
+
+
 ## Train and Validation data sets
 
 ```{r }
@@ -315,7 +323,6 @@ We can decide to train the model on all the explanatory variables (using  `.` as
 For more flexibility, we use that second option here
 
 ```{r}
-
 # And the formula becomes
 formula <- as.formula(paste("class ~", paste(predictor_vars, collapse = " + ")))
 ```
@@ -337,6 +344,62 @@ rf_fit <- train(formula,
 ```{r, results=TRUE}
 rf_fit
 ```
+## Playing with parameters for the RF model 
+
+The package used `caret` allows a lot of testing for the "right" choice of parameters affecting random forest models.  In particular `mtry`  and `ntree`. Let us change these parameters and see how this affects our model accuracy 
+
+
+### The number of variables used for each node of each tree `mtry`
+By default, `caret`does a minimal search of 3 different numbers for `mtry` and selects the one that maximize accuracy. Let's change that parameter to do an extensive **grid search** up to the maximum possible. 
+ 
+ > Here the maximum number is 11 (12-1),  since we have "only" 12 predictor and we need at least one! 
+ 
+```{r}
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                tuneLength = 11, #  <- computes for 12 values of mtry
+                metric= "Kappa",  # we can choose the criteria (Kappa vs Accuracy)
+                trControl = K5_CV_seed)
+                
+                
+```
+
+```{r, results=TRUE}
+rf_fit
+```
+
+```{r}
+plot(rf_fit)
+# One can also plot the graphic with a different metric in mind.! 
+#plot(rf_fit, metric ="Kappa")
+
+```
+
+### The number of trees  used `ntree`
+
+
+```{r}
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 10,
+                trControl = K5_CV_seed)
+                
+                
+```
+
+```{r, results=TRUE}
+rf_fit
+```
+
+```{r}
+plot(rf_fit)
+```
+
+
+
 
 ### Evaluating Model Performance 
 
