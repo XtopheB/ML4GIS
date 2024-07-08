@@ -439,15 +439,11 @@ summary(results)
 ```{r ntreeANDaccuracy}
 
 
-# We need to do a bit of rearrageemtn to have the results in a way easy to plot with ggplot 
- library(tidyr)
-# results_long <- as.data.frame(results)%>%
-#   mutate(Resample = as.factor(Resample)) %>%
-#   pivot_longer(cols = -c(Resample, accuracy), names_to = "SampleSize", values_to = "accuracy")
+# We need to do a bit of rearrangement to have the results in a way easy to plot with ggplot 
+library(tidyr)
 
 results_long <- as.data.frame(results) %>%
   tidyr::pivot_longer(cols = -c(Resample), names_to = "SampleSize", values_to = "accuracy")
-
 
 # Computing the lower bound for nice visual
 MyLowerY <-min(results_long$accuracy) - (0.2*(max(results_long$accuracy) - min(results_long$accuracy)) )
@@ -455,7 +451,6 @@ MyLowerY <-min(results_long$accuracy) - (0.2*(max(results_long$accuracy) - min(r
 # Ordering the  boxplot according to sample size
 results_long <- results_long %>%
   mutate(SampleSize = factor(SampleSize, levels = sort(unique(as.numeric(SampleSize))))) 
-
 
  ggplot(data= results_long)+
   aes(x = SampleSize, y = accuracy) +
@@ -564,6 +559,153 @@ logi_pred_Valid <- predict(logi_fit, validation_data)
 logi_CM <- confusionMatrix(logi_pred_Valid, validation_data$class)
 logi_CM
 ```
+# Adressing the imbalance problem
+
+## Using Kappa instead on accuracy 
+
+In the presence of imbalance classes, we should prefer using **kappa** instead of **accuracy** to select the best model.
+**Kappa** is similar to the classic accuracy measure, but it is able to take into consideration the data sets class imbalance. The definition is: 
+
+$$ \kappa = \frac{p_o-p_e}{1-p_e}  $$
+
+where $p_o$ is the accuracy of the model, and $p_e$ is the measure of the agreement between the model predictions and the actual class values as if happening by chance.^[See *e.g..* https://stats.stackexchange.com/questions/82162/cohens-kappa-in-plain-english for the detail of the computation of $p_e$.] The *Kappa* value indicates how much better the model is performing compared to a different model that makes random classifications based on the distribution of the target variable.
+
+For binary classification **Kappa** can be rewritten as an expression of True Positives (TP), False Negatives (FN), False Negatives (FN), and False Positives (FP):
+
+$$ \kappa = \frac{2(TP \cdot TN - FN \cdot FP)}{(TP + FP) \cdot (FP + TN)+ (TP+FN) \cdot (FN + TN)} $$
+
+## Resampling techniques
+
+There are several methods for handling imbalanced classes in a multivariate (multi-class) classification problem. Using the `caret` package, we can use several resampling techniques:
+
+- up-sampling, down-sampling,
+- SMOTE, and
+- ROSE
+
+The idea is always to resample to have a more balance sample with almost the same number of observation in each class and avoid over-predicting the dominant class. We can combine this with the coice of Kappa as the metric to select the "best" model. 
+
+
+### Up and down sampling 
+
+```{r}
+# Remember the set of parameters we were using 
+K5_CV_seed <- trainControl(method = "cv", 
+                           number = K,
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+# We just need to change one parameter there
+K5_CV_seed_up <- trainControl(method = "cv", 
+                           number = K,
+                           sampling = "up",   ## <-- Adding this will change the sampling distribution
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+
+rf_fit_up <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                metric= "Kappa", # Better for imbalance
+                trControl = K5_CV_seed_up)
+
+rf_fit_up
+
+```
+
+
+```{r}
+K5_CV_seed_down <- trainControl(method = "cv", 
+                           number = K,
+                           sampling = "down",   ## <-- Adding this will change the sampling distribution
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+
+rf_fit_down <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                metric= "Kappa",
+                trControl = K5_CV_seed_down)
+
+rf_fit_down
+
+```
+
+
+## SMOTE (Synthetic Minority Over-sampling Technique)
+ 
+ 
+```{r}
+library(smotefamily)
+
+# Apply SMOTE to the training data
+train_sub<- train_data%>% select(-contains(c("class", "Id")))
+smote_data <- SMOTE(train_sub, train_data$class, K = 5, dup_size = 0)
+
+# Convert the oversampled data into a proper data frame
+train_data_smote <- as.data.frame(smote_data$data)
+train_data_smote$class <- as.factor(train_data_smote$class)
+
+
+rf_fit_smote <- train(formula,
+                data =  train_data_smote,
+                method = "rf",
+                ntree = 100,
+                metric= "Kappa",
+                trControl = K5_CV_seed_down)
+
+rf_fit_smote
+```
+ 
+ 
+##  Comparing all models
+
+All these models use different parameters and have specific advantages and drawbacks. We may still want to compare their **predictive performances** on the various measures of fit. For that we will plot the distribution of the values of these indicators on all the validation samples, for each model.
+
+
+```{r modelsperf}
+models <- list( RF =rf_fit, 
+                Logit = logi_fit, 
+                RF_up = rf_fit_up,
+                RF_down = rf_fit_down, 
+                RF_Smote =  rf_fit_smote)
+                
+perf <- resamples(models)
+
+colvec <- c('#fbb4ae','#b3cde3','#ccebc5','#decbe4','#fed9a6','#ffffcc')
+
+# Compiling Accuracy
+boxplot(perf$values[c("RF~Accuracy", "Logit~Accuracy", 
+                      "RF_up~Accuracy", "RF_down~Accuracy", "RF_Smote~Accuracy")],
+        names = names(models), col=colvec,
+        main = "Accuracy",
+        sub = "Accuracy of all CV validation sets,on all models", 
+        frame.plot = FALSE)
+```
+
+### Comparing Kappa
+
+```{r modelsperf}
+# Compiling Kappa
+boxplot(perf$values[c("RF~Kappa", "Logit~Kappa", 
+                      "RF_up~Kappa", "RF_down~Kappa", "RF_Smote~Kappa")],
+        names = names(models), col=colvec,
+        main= "Kappa",
+        sub = "Kappa of all CV validation sets, on all models", 
+        frame.plot = FALSE)
+
+
+```
+
+> Depending on the criterion choosed and on the objective of the prediction, on may prefer one model to another. 
 
 # Predictions on the whole area
 
@@ -659,7 +801,7 @@ ggplot() +
 ```
 
 
-## Visualizing the predictions  on the map
+## Visualizing the predictions
 
 
 ```{r}
@@ -708,7 +850,7 @@ p_RF
 
 ```
 
-
+### Predictions of the MNL model
 
 
 ```{r}
@@ -777,6 +919,18 @@ combined_df$diff_class <- factor(combined_df$diff_class, levels = names(class_la
 ```
 
 
+ It can be imoortant to compute the differences and visualize where are the differences in prediction: 
+ 
+```{r}
+nb_diff <- combined_df %>%
+  filter(diff=="Change") %>%
+  nrow()
+pc_diff <- round(100 * nb_diff / nrow(combined_df),2)
+```
+
+
+
+
 ```{r}
 #Plot the map pf difference"s
 p_diff <- combined_df%>%
@@ -784,11 +938,11 @@ p_diff <- combined_df%>%
   ggplot()+
   aes(x = x, y = y) +
   geom_raster(aes(fill = diff_class)) +
- scale_fill_manual(values = "black", name = "Differences") +
+ scale_fill_manual(values = "black", name = "Legend") +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Predictions differences",
-       subtitle = "RF predictions vs MNL predictions",
+       subtitle = paste("In total, ", pc_diff, "% of the pixels are different") ,
        x = "Longitude", y = "Latitude")
 
 p_diff
@@ -815,13 +969,6 @@ p_RF_diff
 ### Statistics on the differences 
 
 > How important are the differences between the 2 models? 
-
-```{r}
-nb_diff <- combined_df %>%
-  filter(diff=="Change") %>%
-  nrow()
-pc_diff <- round(100 * nb_diff / nrow(combined_df),2)
-```
 
 
 ```{r}
