@@ -105,7 +105,7 @@ We can now match the information from the ground truth, with what is available f
  and the information from the  satellite (predictors). 
  
 ```{r}
-DataForModel <- extract(img, shp, df = TRUE)
+DataForModel <- terra::extract(img, shp, df = TRUE)
 
 # Creating class for each location 
 DataForModel$class <- as.factor(shp$MC_ID[match(DataForModel$ID, seq(nrow(shp)))])
@@ -168,12 +168,13 @@ ggplot() +
   labs(x = "", y = "") +
   ggtitle("Land types ")
 ```
-There is a  **class imbalance** in the explanatory variable `class`, with classes  *pasture land/ Grassland*  and *Other vegetation* being more numerous than other classes. We need to keep in mind. as this may affect the machine Learning model.  
+
+There is a  **class imbalance** in the explanatory variable `class`, with classes  *pasture land/ Grassland*  and *Other vegetation* being more numerous than other classes. We need to keep in mind as this may affect the machine Learning model.  
 
 
 
 ## Predictors 
-The list of explanatory variables (or *predictors*) are the different bands from the satellite images. For each location, we have a value from each band stored in a variable ($b_1$, $b_2$, $\cdots$, $b_12$). 
+The list of explanatory variables (or *predictors*) are the different bands from the satellite images. For each location, we have a value from each band stored in a variable ( $b_1$, $b_2$, $\cdots$, $b_{12}$ ). 
 
 ```{r}
 # Define the subset of variables (here X1, X, .., X8B, ...X12)
@@ -246,6 +247,7 @@ datasummary_skim(train_data$class , type = "categorical",
 ```
 
 ##  Missing values in the training data set
+After creating the two sub-samples, it is good to chack whether the process worked well and has not created any missing obesrvation (that may happen). 
 
 ```{r}
 # see https://rpubs.com/NguyenKhanh20/1069336
@@ -341,8 +343,7 @@ We can decide to train the model on all the explanatory variables (using  `.` as
 * So using all variables would write  `rf_fit <- train(class ~ . ,  ... `
 * Alternatively, we could use a `formula`  and write `rf_fit <- train(formula, ... `
 
-For more flexibility, we use that second option here
-
+For more flexibility, we use that second option here:
 ```{r}
 # And the formula becomes
 formula <- as.formula(paste("class ~", paste(predictor_vars, collapse = " + ")))
@@ -361,13 +362,15 @@ rf_fit <- train(formula,
                 trControl = K5_CV_seed)
 ```
 
-
 ```{r, results=TRUE}
 rf_fit
 ```
+
+By default, `caret` does a minimal search on the number of variables used for each node of each tree, `mtry`. While training the model,  `caret` searched for 3 values of  `mtry`, here 2, 7  and  12 (all) and provides the value of the accuracy and Kappa for each of these choices.  By default, it will the  select the value that maximize the accuracy. Obviously, we can also try to optimize this choice and do our own selection. 
+
 ## Playing with parameters for the RF model 
 
-The package used `caret` allows a lot of testing for the "right" choice of parameters affecting random forest models.  In particular `mtry`  and `ntree`. Let us change these parameters and see how this affects our model accuracy 
+The package `caret` allows a lot of testing for the "right" choice of parameters affecting random forest models.  In particular `mtry`  and `ntree`. Let us change these parameters and see how this affects our model accuracy 
 
 
 ### The number of variables used for each node of each tree `mtry`
@@ -400,25 +403,70 @@ plot(rf_fit)
 
 ### The number of trees  used `ntree`
 
+Even better, we can combine the search of  `ntree` with the search if `mtry` using a grid search. Since we know that our best choice for  `mtry` was 7, we can impose that choice in our grid. 
 
-```{r}
-rf_fit <- train(formula,
+
+```{r, cache = TRUE}
+# /!\ running this chunk can be long!
+modellist <- list()
+
+# Uses the optimal mtry from the previous model
+grid <- expand.grid(.mtry=  7)
+
+#train with different ntree parameters, to find an optimal amount of trees
+for (ntree in c(50, 100, 250)){
+  set.seed(2512)
+  fit <- train(formula,
                 data = train_data,
                 method = "rf",
-                ntree = 10,
-                trControl = K5_CV_seed)
-                
-                
-```
+                metric = 'Accuracy',
+                tuneGrid = grid,
+                trControl = K5_CV_seed,
+                ntree = ntree)
+  key <- toString(ntree)
+  modellist[[key]] <- fit
+}
 
-```{r, results=TRUE}
-rf_fit
 ```
 
 ```{r}
-plot(rf_fit)
+#Compare results
+results <- resamples(modellist)
+summary(results)
 ```
 
+
+```{r ntreeANDaccuracy}
+
+
+# We need to do a bit of rearrageemtn to have the results in a way easy to plot with ggplot 
+ library(tidyr)
+# results_long <- as.data.frame(results)%>%
+#   mutate(Resample = as.factor(Resample)) %>%
+#   pivot_longer(cols = -c(Resample, accuracy), names_to = "SampleSize", values_to = "accuracy")
+
+results_long <- as.data.frame(results) %>%
+  tidyr::pivot_longer(cols = -c(Resample), names_to = "SampleSize", values_to = "accuracy")
+
+
+# Computing the lower bound for nice visual
+MyLowerY <-min(results_long$accuracy) - (0.2*(max(results_long$accuracy) - min(results_long$accuracy)) )
+
+# Ordering the  boxplot according to sample size
+results_long <- results_long %>%
+  mutate(SampleSize = factor(SampleSize, levels = sort(unique(as.numeric(SampleSize))))) 
+
+
+ ggplot(data= results_long)+
+  aes(x = SampleSize, y = accuracy) +
+  geom_boxplot(fill = SIAP.color, alpha = 0.3)+
+  geom_point(col = "grey")+
+  ylim(MyLowerY, 1)+
+  ggtitle(label = "Optimizing the accuracy of the Random Forest model") +
+  labs(x = "Number of trees (ntree)" )+
+  theme_minimal()
+  
+```
 
 
 
@@ -468,7 +516,8 @@ datasummary_skim(pred_valid , type = "categorical",
                  notes = paste("N =", nrow(pred_valid))) 
 ```
 
-## Logistic model
+
+## Multinomial Logistic model (MNL)
 
 As for the random forest model, we fist train our model on the `train_data` subsample. The Random forets model 
 
@@ -505,6 +554,7 @@ LogiVarImportance<- varImp(logi_fit, scale = FALSE)
 plot(LogiVarImportance)
 ```
 
+> Interestingly, the logistic model does not exhibit the same "*important*" variables. Here $b_1$, $b_2$ and $b_{12}$ are highlighted as important for explaining the variable `class`, but not $b_5$. 
 
 ### The *Out of sample* performance 
 
@@ -563,7 +613,9 @@ ggplot() +
   labs(x = "", y = "", subtitle = paste ( "Random Forest model. N= ", nrow(Table_result)))  +
   ggtitle("Land types predicted on the whole area ")
 ```
-## Predictions with *Multinomial Logistic*
+
+
+## Predictions with a  *Multinomial Logistic* model (MNL)
 
 ```{r}
 # prediction with Multinomial Logistic  
@@ -605,7 +657,6 @@ ggplot() +
   labs(x = "", y = "", subtitle = paste ( "Multinomial Logistic model. N= ", nrow(Table_result_logi)))  +
   ggtitle("Land types predicted on the whole area ")
 ```
-
 
 
 ## Visualizing the predictions  on the map
@@ -715,19 +766,40 @@ combined_df <- combined_df %>%
   mutate(diff = ifelse(prediction_RF == prediction_logi, "No Change", "Change")) %>%
   mutate(diff_class = ifelse(prediction_RF == prediction_logi, prediction_RF, "8"))
 
-
 # Define the  augmented color class labels with the category "Difference" 
 class_labels_N <- c(class_labels, "8" = "Difference")
 
 # Define the augmented color palette accordingly 
 class_colors_N <- c(class_colors, "white")
 
-
 # Convert raster values to a factor with labels
 combined_df$diff_class <- factor(combined_df$diff_class, levels = names(class_labels_N), labels = class_labels_N)
+```
 
+
+```{r}
+#Plot the map pf difference"s
+p_diff <- combined_df%>%
+  filter(diff =="Change") %>%
+  ggplot()+
+  aes(x = x, y = y) +
+  geom_raster(aes(fill = diff_class)) +
+ scale_fill_manual(values = "black", name = "Differences") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Predictions differences",
+       subtitle = "RF predictions vs MNL predictions",
+       x = "Longitude", y = "Latitude")
+
+p_diff
+
+```
+
+
+
+```{r}
 #Plot the map highlighting changes
-p_diff <- ggplot(combined_df, aes(x = x, y = y)) +
+p_RF_diff <- ggplot(combined_df, aes(x = x, y = y)) +
   geom_raster(aes(fill = diff_class)) +
  scale_fill_manual(values = class_colors_N, name = "Land Cover") +
   coord_fixed() +
@@ -736,7 +808,7 @@ p_diff <- ggplot(combined_df, aes(x = x, y = y)) +
        subtitle = "RF predictions vs MNL predictions",
        x = "Longitude", y = "Latitude")
 
-p_diff
+p_RF_diff
 
 ```
 
@@ -845,15 +917,15 @@ knit_exit()
 ### Statistics on the differences 
 
 ```{r}
-nb_diff <- combined_df_C %>%
+nb_diff <- combined_df %>%
   filter(diff=="Change") %>%
   nrow()
-pc_diff <- round(100 * nb_diff / nrow(combined_df_C),2)
+pc_diff <- round(100 * nb_diff / nrow(combined_df),2)
 ```
 
 
 ```{r}
-combined_df_C %>%
+combined_df %>%
   filter(diff=="Change") %>%
   mutate(prediction_RF = fct_infreq(prediction_RF) %>% fct_rev()) %>%  # Reorder and reverse factor levels
   ggplot() + 
@@ -861,7 +933,7 @@ combined_df_C %>%
   theme_minimal() + 
   theme(plot.title = element_text(hjust = 0.5))+ 
   labs(x = "", y = "", 
-       subtitle = paste ( "N= ", nrow(combined_df_C %>% filter(diff=="Change")), "differences (", pc_diff, "% )")
+       subtitle = paste ( "N= ", nrow(combined_df %>% filter(diff=="Change")), "differences (", pc_diff, "% )")
        )  +
   ggtitle("Which categories have more differences?  ")
   
