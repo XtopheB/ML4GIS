@@ -1,6 +1,6 @@
 ---
 title: "Advanced Machine Learning for GIS and Land Cover Estimation "
-subtitle: "Random Forest Model on GIS file (extracted by Blanca)"
+subtitle: "Estimating a Random Forest Model on GIS files (extracted by Blanca)"
 author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -19,30 +19,35 @@ output:
 knitr::opts_chunk$set( message = FALSE, warning = FALSE, results =FALSE, echo = TRUE) 
 ```
 
-# Installing the packages
+
+
+## Installing the packages
+As usual when working with specific data, We need both generic and specific packages. We have 3 broad categories: 
+
+- Packages specific to GIS and maps such as  `sf` and `raster`
+- Packages specific to Data Science and Machine Learning, in particular the package `CARET` that embeds many models and post-estimation features and graphics
+- Generic packages for data management, visualization and dissemination such as `dplyr` and  `ggplot2`.   
 
 ```{r packages}
-# File management
-library(readxl)
-
-
 # GIS packages
 library(raster) ## for reading "RASTER" files
+library(sf)     ## read shapefiles
 library(rgdal)  ## for reading "shapefiles"
 library(sp)     ## for adjusting CRS in 
 library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r
 
+# Model fitting packages for ML
+library(rpart)
+library(caret)
+
+# File management
+library(readxl)
 # Tidy data management packages
 library(dplyr)
 library(data.table)
 library(modelsummary)
 library(ggcorrplot)
 library(forcats)
-
-# Model fitting packages for ML
-library(rpart)
-library(caret)
-
 
 # Plotting packages
 library(ggplot2)
@@ -57,23 +62,25 @@ SIAP.color <- "#0385a8"
 SIAP.red <- "#eb4034"
 
 ```
+# Data and files management
 
+We will import and export files in different format, including GIS specific files in formats that can be *raster* (images) or *shapefiles* (vectors). Also, we will eed to combine, assemble and transform these files to use them as data frames for the Machine Learning model.  
 
-# Importing the Satelite images
+## Importing the Satelite images
 
 There are many data sources freely available with environmental information at a very detailed level. These files are from huge data bases that cover large areas of the word. 
 
-
 ## a. Importing the stack of images
+From QGIS, we import the images that coresponds to the region of interestor **ROI**. The first element is to get the images frilm the satellite. 
 
 ```{r}
 # import stacked raster (img) 
-library(sf)
+# Needs  sf package 
 
 img <- brick("Data/GISBlanca/stack_raster123456788A91112_MayJune2020.tif")
 ```
  
-These are images taken with different bands and reflecting the nature of waves coming back from the satellite sensors. 
+These are images taken with different bands and reflecting the nature of waves coming back from the satellite sensors. These will be our predictors, or explanatory variables, for our model, as the information is available for any point on the region.  
 
 ```{r}
 plot(img)
@@ -81,6 +88,8 @@ plot(img)
 
 
 ##  b. Importing the shapefiles with  ground truth land classes
+
+Then, we have the "*ground truth*" or specific areas where we know the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
 
 ```{r}
 # Importing Shapefiles
@@ -92,6 +101,9 @@ names(img) <- c("b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b8A", "b9", "b1
 
 ## c. Matching the information from Raster (bands) with class values on the ground 
 
+We can now match the information from the ground truth, with what is available from the images (raster). This operation, that uses the exact location and a perfect geographical alignment, will provide a sample with both the information of the nature of the land (in classes)
+ and the information from the  satellite (predictors). 
+ 
 ```{r}
 DataForModel <- extract(img, shp, df = TRUE)
 
@@ -136,8 +148,9 @@ DataForModel$class <- factor(DataForModel$class, levels = names(class_labels), l
 
 ```
 
+Let's have a look at the  sample created with **`r nrow(DataForModel)`**  observation:
 
-```{r, echo = TRUE}
+```{r, results=  TRUE}
 datasummary_skim(as.factor(DataForModel$class) , type = "categorical" , 
                  notes = paste("N =", nrow(DataForModel)) )
 
@@ -155,12 +168,12 @@ ggplot() +
   labs(x = "", y = "") +
   ggtitle("Land types ")
 ```
-
+There is a  **class imbalance** in the explanatory variable `class`, with classes  *pasture land/ Grassland*  and *Other vegetation* being more numerous than other classes. We need to keep in mind. as this may affect the machine Learning model.  
 
 
 
 ## Predictors 
-We define the list of explanatory variables (or *predictors*) 
+The list of explanatory variables (or *predictors*) are the different bands from the satellite images. For each location, we have a value from each band stored in a variable ($b_1$, $b_2$, $\cdots$, $b_12$). 
 
 ```{r}
 # Define the subset of variables (here X1, X, .., X8B, ...X12)
@@ -182,7 +195,10 @@ datasummary_skim(select(DataForModel, predictor_vars) ,   type = "numeric",
 
 # Explanatory variables analysis
 
+It is always a good thing to explore the variables that we are going to use as predictor and try to find variables that are related to each other. Here the bands are not really easy to interpret but we can still see some patterns. 
+For example, the variable (band) **$b_5$** is not correlated with any other variable (except $b_{12}$). This means that its information is quite different from other variables. Also variables **$b_1$**, **$b_2$**, and **$b_3$** are quite correlated meaning that the information embedded in each of these bands is almost the same, and different from **$b_5$**.
 
+> We may then legitimately conclude  that these variables **$b_5$** and either **$b_1$**, **$b_2$**, or **$b_3$** may have some explanatory power on the land classes.
 
 ```{r}
 # We compute the correlation matrix of the covariates
@@ -201,6 +217,7 @@ The data preparation & validation methods ends here, so let’s process to machi
 
 # Machine learning
 
+As usual in Machine Learning, we need to divide the original sample with `r nrow(DataForModel)`  into *training*  and *validation*  samples based on a  80-20\% rule. This has to be done randomly to avoid any pattern to be appearing in only one of the two samples that should have the same characteristics.  
 
 ## Train and Validation data sets
 
@@ -290,7 +307,11 @@ We begin with fitting a Random Forest model using cross-validation on the *Train
 
 Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
 
-Our final output will be based on the **majority vote** of the individual decision trees. 
+Our final output will be based on the **majority vote** of the individual decision trees.
+
+
+> We may refer to the *caret* [package manual](https://topepo.github.io/caret/model-training-and-tuning.html) to learn about all the options and models available. The algorithm that will be conducted all along this exercise is the following:
+![](https://topepo.github.io/caret/premade/TrainAlgo.png)
 
 
 ```{r, include = FALSE}
