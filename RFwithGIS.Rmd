@@ -4,7 +4,6 @@ subtitle: "Random Forest Model on GIS file extracted"
 author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
-  pdf_document: default
   html_document:
     code_folding: show
     toc: yes
@@ -12,6 +11,7 @@ output:
     highlight: tango
     number_sections: no
     theme: lumen
+  pdf_document: default
   word_document: default
 ---
 

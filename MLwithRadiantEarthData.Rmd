@@ -74,7 +74,7 @@ VBoS file  has the classification of points into different levels of land, while
 
 ```{r}
 # Radiant earth Data set
- Xdata <-  read_xlsx ("Data/X_vanuatu_points_data.xlsx")
+ Xdata <-  read_xlsx ("Data/X_vanuatu_points_data-B.xlsx")
 
 # extracting lat and long
  
@@ -414,10 +414,16 @@ table(rf_pred_Valid)
 > A trick is to begin to optimize the random forest on our training process first. 
 
 
-We therefore begin by tuning the **number of possible variables** (*mtry*)   considered at each split in a decision tree. We do a grid search and compute the accuracy for each value of *mtry* $\in \{0,6\}$.
+We therefore begin by tuning the **maximum number of randomly chosen variables** (*mtry*)   considered at each split in a decision tree. We do a grid search and compute the accuracy for each value of *mtry* $\in \{0,6\}$.
 
 
-> **TBC** 
+
+```{r}
+plot(rf_fit)
+
+```
+
+
 
 ```{r}
 knitr::knit_exit()

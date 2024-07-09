@@ -430,7 +430,7 @@ Comparing the new Random Forest to the old one we see some improvement in both t
 
 ## Optimizing our framework with information on our data set
 
-Another way we can optimize our model fit is through our choice of the split between **train** and **validation** data sets. Since we have an imbalanced data set (we oberve few marriage before 15),  we can increase the proportion of *Married observation* in our training data, and use the **SMOTE** algorithm like we did in module 2 to oversample the minority class (married before 15)and try to increase the general performance of the model.
+Another way we can optimize our model fit is through our choice of the split between **train** and **validation** data sets. Since we have an imbalanced data set (we observe few marriage before 15),  we can increase the proportion of *Married observation* in our training data, and use the **SMOTE** algorithm like we did in module 2 to oversample the minority class (married before 15)and try to increase the general performance of the model.
 
 ```{r, include = FALSE}
 # Splits data into training and testing sets

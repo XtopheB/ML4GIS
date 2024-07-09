@@ -790,11 +790,6 @@ kable(Metrics_Best)
 ```
 
 
-
-
-
-
-
 ##  Random Forest
 
 Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
