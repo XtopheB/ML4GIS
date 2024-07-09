@@ -4,6 +4,8 @@ subtitle: "Estimating a Random Forest Model on GIS files (extracted by Blanca)"
 author: "Christophe Bontemps (SIAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
+  word_document: default
+  pdf_document: default
   html_document:
     code_folding: show
     toc: yes
@@ -11,8 +13,6 @@ output:
     highlight: tango
     number_sections: no
     theme: lumen
-  word_document: default
-  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -464,7 +464,7 @@ modellist <- list()
 grid <- expand.grid(.mtry=  7)
 
 #train with different ntree parameters, to find an optimal amount of trees
-for (ntree in c(50, 100, 250)){
+for (ntree in c(50, 100, 250, 500)){
   set.seed(2512)
   fit <- train(formula,
                 data = train_data,
@@ -539,6 +539,32 @@ GISVarImportance<- varImp(rf_fit, scale = FALSE)
 plot(GISVarImportance)
 ```
 
+### Final model selection
+Based on what we have discovered, it seems that selecting a Random Forest model with `mtry`= 7 and `ntree`= 250 should be a quite good option. Since we have quite imbalance classes, we also will rely more on the value of the  *kappa* parameter that in the pure accuracy in the remaining part of the analysis 
+
+```{r, cache = TRUE}
+# Uses the optimal mtry from the previous model
+
+grid <- expand.grid(.mtry=  7)
+ntree = 250
+
+#Train a model  with fixed mtry and ntree parameters, other parameters are as previously defined 
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                metric = 'kappa',
+                tuneGrid = grid,
+                trControl = K5_CV_seed,
+                ntree = ntree)
+  
+rf_fit
+
+```
+
+
+
+
+
 ### The *Out of sample* performance 
 
 
@@ -564,7 +590,7 @@ datasummary_skim(pred_valid , type = "categorical",
 
 ## Multinomial Logistic model (MNL)
 
-As for the random forest model, we fist train our model on the `train_data` subsample. The Random forets model 
+As for the random forest model, we fist train our model on the `train_data` subsample. We only have to change the `method` in the code and in `train()`function to **multinom** (multinomial logit). 
 
 
 ```{r, cache = FALSE}
@@ -776,12 +802,13 @@ boxplot(perf$values[c("RF~Kappa", "Logit~Kappa",
 We now take the whole image and predict on all pixels using the model that we estimated. 
 
 ## Predictions with *Random Forest*
+While doing the prediction on thje whole area (each pixel of the raster on the ROI), we  export the results to a *.tif* file that will be used in QGIS. 
 
 ```{r}
 # prediction with Random Forest model
 rf_result <- predict(img,
                   rf_fit,
-                  filename = "Data/GISBlanca/classification_fromRF.tif",
+                  filename = "Data/GISBlanca/classification_fromRF.tif", # export to be used in QGIS
                   overwrite = TRUE
                   )  
 
@@ -824,10 +851,11 @@ ggplot() +
 ## Predictions with a  *Multinomial Logistic* model (MNL)
 
 ```{r}
-# prediction with Multinomial Logistic  
+# prediction with Multinomial Logistic 
+
 logi_result <- predict(img,
                   logi_fit,
-                  filename = "Data/GISBlanca/classification_fromlogi.tif",
+                  filename = "Data/GISBlanca/classification_fromlogi.tif",  # Export to QGIS
                   overwrite = TRUE
                   )  
 
@@ -905,7 +933,7 @@ p_RF <- ggplot() +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Prediction (with RF) ",
-       subtitle = paste("Out-of-sample accuracy was ", as.character(round(rf_CM$overall[1], 4)) ), 
+       subtitle = paste("Note: Out-of-sample kappa was ", as.character(round(rf_CM$overall[2], 4)) ), 
        caption =  paste ( "N= ", nrow(raster_df_RF)),
        x = "Longitude",
        y = "Latitude")
@@ -938,7 +966,7 @@ p_logi <- ggplot() +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Prediction (MNL) ",
-       subtitle = paste("Out-of-sample accuracy was ", as.character(round(logi_CM$overall[1], 4)) ), 
+       subtitle = paste("Note: Out-of-sample kappa was ", as.character(round(logi_CM$overall[2], 4)) ), 
        caption =  paste ( "N= ", nrow(raster_df_logi)),
        x = "Longitude",
        y = "Latitude")
