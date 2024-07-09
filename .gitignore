@@ -19,8 +19,7 @@
 *.pdf
 *.md
 *.tex
-
-
+*.docx
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf
@@ -32,10 +31,14 @@ vignettes/*.pdf
 # Temporary files created by R markdown
 *.utf8.md
 *.knit.md
+*.aux
+*.synctex
 # R Environment Variables
 .Renviron
 # pkgdown site
 docs/
+# Data
+*.zip
 # translation temp files
 po/*~
 # RStudio Connect folder
@@ -44,3 +47,16 @@ rsconnect/
 2-SimpleClassification_files
 Data
 ML4GIS.Rproj
+5-MapsWithR_files
+4-RandomForestImputation_files
+4-RandomForest_files
+RFwithGIS_files
+GISVanuatu_files
+GIScode.Rmd
+AdvancedMLwithGISForLC_files
+Introduction à la cartographie avec R_files
+MLwithGISForLC_files
+CoursThibault.R
+MLwithRadiantEarthData_files
+ROIs_pts.zip
+AdvancedMLwithGISForLC.docx
