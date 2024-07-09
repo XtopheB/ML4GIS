@@ -52,6 +52,7 @@ library(forcats)
 # Plotting packages
 library(ggplot2)
 library(RColorBrewer)
+library("patchwork") # To combine plots
 
 # Nice presentation of results
 library(knitr)
@@ -246,6 +247,43 @@ datasummary_skim(train_data$class , type = "categorical",
                  notes = paste("N =", nrow(train_data))) 
 ```
 
+
+```{r, echo = TRUE}
+# Graphics to compare 
+# train data set
+p_Train <- train_data %>%
+mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", 
+       title = "Land types",
+       subtitle = "Train data set", 
+        caption =  paste ( "N= ", nrow(train_data)))
+
+# Validation  
+p_Valid <- validation_data %>%
+mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", 
+       title = "Land types",
+       subtitle = "Validation data set", 
+        caption =  paste ( "N= ", nrow(validation_data)))
+
+
+# Combined plot 
+
+p_Train | p_Valid
+
+
+```
+
+
+
 ##  Missing values in the training data set
 After creating the two sub-samples, it is good to chack whether the process worked well and has not created any missing obesrvation (that may happen). 
 
@@ -256,6 +294,18 @@ anyNA(train_data)
 ```
 
 > We do **not**  have missing values for any variables. 
+
+
+
+## Validation data set
+
+
+```{r,  results= TRUE }
+datasummary_skim(validation_data$class , type = "categorical",
+                 title = "Validation data set",
+                 notes = paste("N =", nrow(validation_data))) 
+```
+
 
 
 ##  Selecting Cross Validation parameters
@@ -563,7 +613,7 @@ logi_CM
 
 ## Using Kappa instead on accuracy 
 
-In the presence of imbalance classes, we should prefer using **kappa** instead of **accuracy** to select the best model.
+In the presence of imbalance classes, where one or several classes are significantly **underrepresented** compared to others, we should prefer using **kappa** instead of **accuracy** to select the best model.
 **Kappa** is similar to the classic accuracy measure, but it is able to take into consideration the data sets class imbalance. The definition is: 
 
 $$ \kappa = \frac{p_o-p_e}{1-p_e}  $$
@@ -582,10 +632,18 @@ There are several methods for handling imbalanced classes in a multivariate (mul
 - SMOTE, and
 - ROSE
 
-The idea is always to resample to have a more balance sample with almost the same number of observation in each class and avoid over-predicting the dominant class. We can combine this with the coice of Kappa as the metric to select the "best" model. 
+The idea is always to resample to have a more balance sample with almost the same number of observation in each class and avoid over-predicting the dominant class. We can combine this with the choice of Kappa as the metric to select the "best" model. 
 
 
 ### Up and down sampling 
+Both up-sampling and down-sampling are techniques that change the distribution of the classes by removing or duplicating observations.To do that, one randomly duplicate observations or remove some 
+
+- **Up**: increase the number of instances in the minority class (less frequent class) by randomly **duplicating** observations from the minority class or by generating synthetic examples using techniques like SMOTE (see below).
+
+- **Down**: decrease the number of instances in the majority class (most frequent class) by randomly **removing** observations from the majority class until the class distribution is balanced with the minority class.
+
+> Up-sampling increases the size of the dataset, while down-sampling decreases it.
+
 
 ```{r}
 # Remember the set of parameters we were using 
@@ -641,7 +699,10 @@ rf_fit_down
 
 
 ## SMOTE (Synthetic Minority Over-sampling Technique)
- 
+
+In that technique, one create a new training sample from the original one.
+SMOTE works by generating new **synthetic** examples that are close in the feature space (some twins). For each minority class example selected, SMOTE finds its k-nearest neighbors in the feature space (typically Euclidean distance is used). It then creates new examples by choosing one of the k-nearest neighbors randomly and using it to create a new synthetic instance at a randomly selected point between the chosen neighbor and the original example. By increasing the number of minority class samples, SMOTE helps to balance the class distribution and improve the performance of machine learning models in predicting the minority class. 
+
  
 ```{r}
 library(smotefamily)
@@ -670,6 +731,9 @@ rf_fit_smote
 
 All these models use different parameters and have specific advantages and drawbacks. We may still want to compare their **predictive performances** on the various measures of fit. For that we will plot the distribution of the values of these indicators on all the validation samples, for each model.
 
+### Comparing acuracies
+
+It is important to compare models base on one of the "metrics" available. In our case, we will focus on "Accuracy" or "Kappa" as these are the most relevant. But one may as well be focusing on one particular class specificity if there is one class that one wish to predict well.  
 
 ```{r modelsperf}
 models <- list( RF =rf_fit, 
@@ -693,7 +757,7 @@ boxplot(perf$values[c("RF~Accuracy", "Logit~Accuracy",
 
 ### Comparing Kappa
 
-```{r modelsperf}
+```{r modelskappa}
 # Compiling Kappa
 boxplot(perf$values[c("RF~Kappa", "Logit~Kappa", 
                       "RF_up~Kappa", "RF_down~Kappa", "RF_Smote~Kappa")],
@@ -885,7 +949,7 @@ p_logi
 
 
 ```{r}
-library("patchwork")
+
 # Combine the plots
 # removing the legend for one plot 
 p_RF <- p_RF + theme(legend.position = "none")
@@ -954,7 +1018,7 @@ p_diff
 ```{r}
 #Plot the map highlighting changes
 p_RF_diff <- ggplot(combined_df, aes(x = x, y = y)) +
-  geom_raster(aes(fill = diff_class)) +
+  geom_raster(aes(fill = diff_class),  alpha = 0.5) +
  scale_fill_manual(values = class_colors_N, name = "Land Cover") +
   coord_fixed() +
   theme_minimal() +
@@ -987,48 +1051,63 @@ combined_df %>%
 
 ```
 
-### Comparing with QGIS (Random Forest model)
+### Comparing Random Forest model with Blanca's
 
 ```{r}
 
 # Read the TIFF file
-raster_RF_QGIS <- rast("Data/GISBlanca/R_RF_Classification_2020.tif")
+raster_RF_Blanca <- rast("Data/GISBlanca/R_RF_Classification_2020.tif")
 
 # Convert the raster to a data frame for ggplot2
-raster_df_QGIS <- as.data.frame(raster_RF_QGIS, xy = TRUE)
+raster_df_Blanca <- as.data.frame(raster_RF_Blanca, xy = TRUE)
 
 # Convert raster values to a factor with labels
-raster_df_QGIS$R_RF_Classification_2020 <- factor(raster_df_QGIS$R_RF_Classification_2020, levels = names(class_labels), labels = class_labels)
+raster_df_Blanca$R_RF_Classification_2020 <- factor(raster_df_Blanca$R_RF_Classification_2020, levels = names(class_labels), labels = class_labels)
 
 
 # Plot using ggplot2
-p_QGIS <- ggplot() +
-  geom_raster(data = raster_df_QGIS, aes(x = x, y = y, fill = R_RF_Classification_2020), alpha = 0.5 ) +
+p_Blanca <- ggplot() +
+  geom_raster(data = raster_df_Blanca, aes(x = x, y = y, fill = R_RF_Classification_2020), alpha = 0.5 ) +
   scale_fill_manual(values = class_colors, name = "Land Cover") +
   coord_fixed() +
   theme_minimal() +
-  labs(title = "Prediction (with QGIS) ",
+  labs(title = "Prediction (from Blanca) ",
        x = "Longitude",
        y = "Latitude")
 
-p_QGIS
+p_Blanca
 
 ```
 
 ### Visualizing the differences
+
+
+
+```{r}
+# Combine the plots
+# removing the legend for one plot 
+p_RF <- p_RF + theme(legend.position = "none")
+p_Blanca <- p_Blanca + theme(legend.position = "none")
+
+
+RFvsBlanca <- (p_RF |  p_Blanca) 
+
+# Display the combined plot
+print(RFvsBlanca)
+```
 
 ```{r}
 # Computing the differences
 
 # Merge the data frames on x and y coordinates
 combined_df <- combined_df %>%
-  inner_join(raster_df_QGIS, by = c("x", "y")) %>%
-  rename(prediction_QGIS = R_RF_Classification_2020)
+  inner_join(raster_df_Blanca, by = c("x", "y")) %>%
+  rename(prediction_Blanca = R_RF_Classification_2020)
 
 # Create a new column indicating whether the predictions are the same or different
 combined_df <- combined_df %>%
-  mutate(diff_Q = ifelse(prediction_RF == prediction_QGIS, "No Change", "Change"))%>%
-   mutate(diff_class_Q = ifelse(prediction_RF ==prediction_QGIS, prediction_RF, "8"))
+  mutate(diff_Q = ifelse(prediction_RF == prediction_Blanca, "No Change", "Change"))%>%
+   mutate(diff_class_Q = ifelse(prediction_RF ==prediction_Blanca, prediction_RF, "8"))
 
 # Convert raster values to a factor with labels
 combined_df$diff_class_Q <- factor(combined_df$diff_class_Q, levels = names(class_labels_N), labels = class_labels_N)
@@ -1046,7 +1125,7 @@ p_full <- ggplot(combined_df, aes(x = x, y = y)) +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Predictions differences",
-       subtitle = "R predictions vs QGIS predictions",
+       subtitle = "RF predictions vs Blanca's predictions",
        x = "Longitude", y = "Latitude")
 
 p_full
