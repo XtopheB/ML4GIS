@@ -67,19 +67,16 @@ SIAP.red <- "#eb4034"
 
 We will import and export files in different format, including GIS specific files in formats that can be *raster* (images) or *shapefiles* (vectors). Also, we will eed to combine, assemble and transform these files to use them as data frames for the Machine Learning model.  
 
-## Importing the Satelite images
+## Importing geospatial information
 
 There are many data sources freely available with environmental information at a very detailed level. These files are from huge data bases that cover large areas of the word. 
 
-## a. Importing the stack of images
-From QGIS, we import the images that corresponds to the region of interest or **ROI**. The first element is to get the images from the satellite. 
-
+## a. Importing the stack of images (TIFF)
+From QGIS, we import the images that corresponds to the island of Efate. 
 
 ```{r}
-# import stacked raster (img) 
+# import stacked raster (TIFF images)  
 # Needs  sf package 
-
-# Importing TIFF images 
 
 img <- brick("Data/GIS-ROI-V1/stacked_image_2020_20m.tif")
 ```
@@ -91,24 +88,21 @@ plot(img)
 ```
 
 
-##  b. Importing the shapefiles with  ground truth land classes
+##  b.  ROIs or "ground truth land classes" (shapefiles)
 
-Then, we have the "*ground truth*" or specific areas where we know the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
+The Region of Intereest or **ROIs** are also called  "*ground truth*"  areas where we *know* or *observed*  the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
+
+> See Blanca's message for erxplanation on the construction of the ROIs
 
 ```{r}
-# IMPORTANT: Folders for data follows the directory structure defined during course in July
-# This .Rmd  file is in "TRAINING_VANUATU_JULY2024_COMPLETE_SENT/Working_in_R"
-
-# Importing Shapefiles
-shp <- read_sf("../Data/Results/LC_2020/training_input/Training_data_SHP.shp")
-
-# Previously here shp <- read_sf("Data/GISBlanca/reference_dataset_ROIs/")
+# Importing ROIs (Shapefiles)
+shp <- read_sf("Data/GIS-ROI-V1/ROIs_noCloud/")
 ```
 
 
 ```{r}
 # extract classes and band information and put in a dataframe for later
-names(img) <- c("b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b8A", "b9", "b11", "b12")
+names(img) <- c("4_red", "3_green", "2_blue", "8_nir", "11_swir16", "y_ndvi", "y_mndwi", "y_savi", "y_bsi", "y_vcp", "dry_ndvi", "dry_mndwi","dry_bsi","wet_ndvi","wet_mndwi","wet_bsi")
 ```
 
 ## c. Matching the information from Raster (bands) with class values on the ground 
