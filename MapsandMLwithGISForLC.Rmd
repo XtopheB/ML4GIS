@@ -1,0 +1,1105 @@
+---
+title: "Advanced Machine Learning for GIS and Land Cover Estimation "
+subtitle: "Random Forest Model on GIS file (extracted by Blanca)"
+author: "Christophe Bontemps (SIAP)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: true
+    highlight: tango
+    number_sections: no
+    theme: lumen
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( message = FALSE, warning = FALSE, results =FALSE, echo = TRUE) 
+```
+
+# Installing the packages
+
+```{r packages}
+# File management
+library(readxl)
+
+
+# GIS packages
+library(raster) ## for reading "RASTER" files
+library(rgdal)  ## for reading "shapefiles"
+library(sp)     ## for adjusting CRS in 
+library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r
+
+# Tidy data management packages
+library(dplyr)
+library(data.table)
+library(modelsummary)
+library(ggcorrplot)
+
+# Model fitting packages for ML
+library(rpart)
+library(caret)
+
+
+# Plotting packages
+library(ggplot2)
+library(RColorBrewer)
+
+# Nice presentation of results
+library(knitr)
+library(papeR)
+
+# My colors:
+SIAP.color <- "#0385a8"
+SIAP.red <- "#eb4034"
+
+```
+
+
+# Importing the Satelite images
+
+There are many data sources freely available with environmental information at a very detailed level. These files are from huge data bases that cover large areas of the word. 
+
+
+## a. Importing the stack of images
+
+```{r}
+# import stacked raster (img) 
+library(sf)
+
+img <- brick("Data/GISBlanca/stack_raster123456788A91112_MayJune2020.tif")
+```
+
+
+##  b. Importing the shapefiles with  ground truth land classes
+```{r}
+# Importing Shapefiles
+shp <- read_sf("Data/GISBlanca/reference_dataset_ROIs/")
+
+# extract classes and band information and put in a dataframe
+names(img) <- c("b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b8A", "b9", "b11", "b12")
+```
+
+## c. Matching the information from Raster (bands) with class values on the ground 
+
+```{r}
+DataForModel <- extract(img, shp, df = TRUE)
+
+# Creating class for each location 
+# DataForModel$class <- as.factor( shp$class[ match(DataForModel$ID, seq(nrow(shp)) ) ])
+
+
+DataForModel <- left_join(DataForModel, shp, join_by("ID"=="C_ID")) %>%
+  select(-c("ID", "fid", "C_name", "SCP_UID", "geometry")) %>%
+  mutate(class = as.factor(MC_name))
+```
+
+
+## Summary statistics
+
+
+```{r}
+datasummary_skim(as.factor(DataForModel$class) , type = "categorical" , 
+                 notes = paste("N =", nrow(DataForModel)) )
+
+```
+
+```{r}
+# keeping the name of the classes
+ClassesNames <- levels(DataForModel$class)
+
+# Graphic
+DataForModel %>%
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "") +
+  ggtitle("Land types ")
+```
+
+
+
+
+## Predictors 
+We define the list of explanatory variables (or *predictors*) 
+
+```{r}
+# Define the subset of variables (here X1, X, .., X8B, ...X12)
+predictor_vars <- DataForModel %>%
+  select(starts_with("b")) %>%
+  names()
+
+predictor_vars
+
+```
+
+
+```{r, results=TRUE, echo=TRUE}
+datasummary_skim(select(DataForModel, predictor_vars) ,   type = "numeric",
+                 title = "Full data set (DataForModel)",
+                notes = paste("N =", nrow(DataForModel)) )
+```
+
+
+# Explanatory variables analysis
+
+
+
+```{r}
+# We compute the correlation matrix of the covariates
+corr_coef<-cor(DataForModel[, predictor_vars], use = "p")
+
+#And then plot it with nice options 
+ggcorrplot(corr_coef, 
+           type = "lower",         # lower triangle of the matrix only
+           #hc.order = TRUE,        # variable sorted from highest to lowest
+           outline.col = "white",  #Color options
+           lab = TRUE)
+```
+
+
+The data preparation & validation methods ends here, so let’s process to machine learning models.
+
+# Machine learning
+## Train and Validation data sets
+
+```{r }
+# Splits data into training and testing sets
+set.seed(007)
+# We'll randomly pick some observation from the full data set
+
+trainIndex <- createDataPartition(DataForModel$class, p = .80, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# Creating the two data sets: 
+train_data <- DataForModel[ trainIndex,]
+validation_data  <- DataForModel[-trainIndex,]
+
+```
+
+
+We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories distribution.  
+
+```{r,  results= TRUE }
+datasummary_skim(train_data$class , type = "categorical",
+                 title = "Train data set",
+                 notes = paste("N =", nrow(train_data))) 
+```
+
+##  Missing values in the training data set
+
+```{r}
+# see https://rpubs.com/NguyenKhanh20/1069336
+
+anyNA(train_data)
+```
+
+> We do **not**  have missing values for any variables. 
+
+
+##  Selecting Cross Validation parameters
+
+```{r, include = FALSE, echo = FALSE}
+# function to set up random seeds when running on several cores 
+#  (you do not need to understand that)
+
+setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 2512) {
+  #B is the number of resamples and integer vector of M (numbers + tune length if any)
+  B <- if (method == "cv") numbers
+  else if(method == "repeatedcv") numbers * repeats
+  else NULL
+  
+  if(is.null(length)) {
+    seeds <- NULL
+  } else {
+    set.seed(seed = seed)
+    seeds <- vector(mode = "list", length = B)
+    seeds <- lapply(seeds, function(x) sample.int(n = 1000000, size = numbers + ifelse(is.null(tunes), 0, tunes)))
+    seeds[[length(seeds) + 1]] <- sample.int(n = 1000000, size = 1)
+  }
+  # return seeds
+  seeds
+}
+
+```
+
+```{r}
+# Summary function with six statistics of interest 
+# sixStats <- function(...) c(twoClassSummary(...), 
+#                             defaultSummary(...))
+```
+
+By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specify the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
+
+```{r controls}
+
+# control variables (see later)
+K <- 5
+Myrepeats <- 10
+rcvTunes <- 1 # tune number of models
+Myseed <- 2512
+
+```
+
+
+##  Random Forest
+
+We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
+
+Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
+
+Our final output will be based on the **majority vote** of the individual decision trees. 
+
+
+```{r, include = FALSE}
+# Repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                      numbers = K,
+                      repeats = Myrepeats, 
+                      tunes = 100,
+                      seed = Myseed)
+
+# Configure the trainControl argument for cross-validation
+K5_CV_seed <- trainControl(method = "cv", 
+                           number = K,
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+```
+
+
+###  Training the model on selected variables 
+
+We can decide to train the model on all the explanatory variables (using  `.` as right-hand side of the formula as below) or an only a subset of the variables that are available to us:
+
+* So using all variables would write  `rf_fit <- train(class ~ . ,  ... `
+* Alternatively, we could use a `formula`  and write `rf_fit <- train(formula, ... `
+
+For more flexibility, we use that second option here
+
+```{r}
+
+# And the formula becomes
+formula <- as.formula(paste("class ~", paste(predictor_vars, collapse = " + ")))
+```
+
+> Our `formula` is now `r paste("class ~", paste(predictor_vars, collapse = " + "))`  
+
+And we can train our model: 
+
+```{r, cache = FALSE}
+# Train your model using the subset of variables
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                trControl = K5_CV_seed)
+```
+
+
+```{r, results=TRUE}
+rf_fit
+```
+
+## Evaluating Model Performance 
+
+We can assess the quality of the model both *in sample*, that is how well the model estimates the data within the training data set  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
+
+## The *in sample* performance is:
+
+```{r, results=TRUE}
+rf_pred <- predict(rf_fit, train_data)
+# length(rf_pred)
+
+# Confusion, matrix
+ confusionMatrix(rf_pred, train_data$class)
+```
+
+
+We need now further investigation to see if the model generalizes well or if it just has learned from the training data. The high accuracy is a symptom of overfitting.
+
+### Variable importance
+
+
+```{r}
+GISVarImportance<- varImp(rf_fit, scale = FALSE)
+plot(GISVarImportance)
+```
+
+
+## The *Out of sample* performance 
+
+
+```{r, results=TRUE}
+rf_pred_Valid <- predict(rf_fit, validation_data)
+confusionMatrix(rf_pred_Valid, validation_data$class)
+```
+
+### Predicted classification on the validation sample
+
+Our validation sample has `r nrow(validation_data)`. Let's see how the prediction goes on these points: 
+
+
+```{r}
+pred_valid <-as.data.frame(rf_pred_Valid) 
+
+datasummary_skim(pred_valid , type = "categorical",
+                 title = "Prediction",
+                 notes = paste("N =", nrow(pred_valid))) 
+```
+
+
+# Prediction on the whole area
+
+We now take the whole image and predict on all pixel using the model that we estimated. 
+
+```{r}
+result <- predict(img,
+                  rf_fit,
+                  filename = "Data/GISBlanca/classification_fromR.tif",
+                  overwrite = TRUE
+                  )  
+
+```
+
+
+```{r,  results= TRUE }
+Table_result <- as.data.frame(result) %>%
+  mutate(class = as.factor(classification_fromR) )
+
+datasummary_skim(Table_result , type = "categorical",
+                 title = "Prediction on the whole region",
+                 notes = paste("N =", nrow(Table_result))) 
+```
+
+
+```{r}
+knit_exit()
+```
+
+
+
+############################## 
+
+# Leftover from other tests
+
+## If we have several raster images 
+We downloaded several raster images  or *.tiff* files. Each file can embed several layers. Here is a listing all the raster files and all their layers.
+
+
+```{r, results=TRUE}
+# GISfiles <- list.files(path = "Data/GIS2/",
+#                       recursive=TRUE,
+#                       pattern = "*.tif", full.names=TRUE)
+# 
+# length(GISfiles)
+# GISfiles
+  
+```
+
+
+### Features of Sentinel2 data (raster files) 
+
+It is important to ave a look at the metadata to understand the structure of the data (*e.g.* how many layers) and to find some important information on the **coordinate reference system** (crs) used.  
+ 
+```{r, results = TRUE}
+# Reading GIS files 
+SentinelData1<-raster(GISfiles[1])   
+SentinelData2<-raster(GISfiles[2])   
+SentinelData3<-raster(GISfiles[3])   
+
+# Information on a specific file from Sentinel data 
+SentinelData1
+```
+One can also plot directly **one** image (one layer). 
+
+```{r}
+plot(raster(GISfiles[12]) ,
+     main = "Raster Image Plot",      # Title of the plot
+     axes = FALSE,                      # Display axes
+     box = FALSE,                      # Remove box around plot
+     )
+```
+###  Stacking all layers
+One can also **stack** all the layers in one single object. Here we selected the files that were collected for a single date. 
+
+```{r}
+# create raster stack
+# Use (https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r)
+
+FullStack <- stack(GISfiles[1:12])
+FullStack
+                   
+```
+Next, we read in the different bands that comprise the satellite imagery. Each band refers to a different spectrum:
+
+```{r}
+# plot stack
+plot(FullStack)
+```
+
+
+All use the same crs. 
+```{r, results=TRUE}
+crs(FullStack)
+```
+
+## 2. Importing Shapefiles 
+
+
+# Importing data (CSV) directly from QGIS
+
+```{r}
+# data directly exported from  QGIS
+ DataForModelQGIS <- read.csv("Data/Dataset_for_model_wkt.csv")
+
+# Data with lat and long (created for R)
+DataForModelLAT <- read.csv("Data/Dataset_for_model_WGS84-B.csv")
+
+```
+
+
+### Spatial representation of  points from QGIS  
+
+```{r}
+
+# Convert to sf object
+library(sf)
+data_sf <- st_as_sf(DataForModelQGIS, wkt = "geometry", crs = unique(DataForModelQGIS$SpatialRef))
+
+# Reproject the sf object to EPSG:4326 (should create latitude values are in the correct range [-90, 90] degrees.)
+# data_sf <- st_transform(data_sf, crs = st_crs(4326))
+
+
+```
+
+```{r}
+LCpalette = c('brown', 'red', 'blue', 'darkgreen', 'darkblue' )
+data_sf %>%
+  mutate( Land = as.factor(class)) %>%
+ggplot() +
+geom_sf(aes(color = Land),  alpha = 0.5) +
+  scale_color_manual(values= LCpalette, name = "Land type") +
+  theme_minimal() +
+  labs(title = "Map from CSV Data", x = "Longitude", y = "Latitude", color = "Category")
+```
+```{r}
+# 
+# # Correct the latitude values to be negative if they are positive
+# data_sf$y <- ifelse(data_sf$y > 0, -data_sf$y, data_sf$y)
+# 
+# # Create a new sf object with the corrected coordinates
+# data_sf_corrected <- st_as_sf(data_sf, coords = c("x", "y"), crs = st_crs(data_sf))
+# 
+# # Now reproject the corrected sf object to EPSG:4326
+# data_sf_corrected <- st_transform(data_sf_corrected, crs = 4326)
+
+
+
+```
+
+#### With a basemap
+There is something wrong with the coordinates that *sf* doesn't convert well. TBC
+
+```{r}
+# library(ggspatial)
+# library(prettymapr)
+# 
+# # Define the bounding box
+# bbox <- st_bbox(data_sf)
+# 
+# 
+# # Create a ggplot object with the basemap
+# ggplot() +
+#   annotation_map_tile(type = "osm") +
+#   geom_sf(data = data_sf, color = "red", size = 2) +
+#  coord_sf(xlim = c(bbox["xmin"], bbox["xmax"]), ylim = c(bbox["ymin"], bbox["ymax"])) +
+# #  coord_sf(xlim = MylimX, ylim = MylimY) +
+#   theme_minimal() +
+#   labs(title = "Map with Spatial Data Overlay", x = "Longitude", y = "Latitude")
+```
+
+### Spatial representation of points from QGIS  with Latitude and longitude 
+
+
+```{r, results='asis'}
+library(leaflet)
+
+# If you want to set your own colors manually:
+pal <- colorFactor(
+  #palette = c('red',  'green', 'purple', 'orange', 'blue'),
+  palette = c('brown', 'red', 'blue', 'darkgreen', 'darkblue' ),
+  domain = DataForModelLAT$class
+)
+
+# Base map using leaflet with your data frame
+m <- leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(data = DataForModelLAT, 
+                   label = c("Barez soil", "Built-up", "Reef", "Vegetation", "Water") ,
+                   lng = ~long, 
+                   lat = ~lat, 
+                   color = ~pal(class),
+                   radius = 5 )
+m
+
+```
+
+
+```{r}
+# library(ggspatial)
+# library(ggmap)
+# DOES NOT WORK WITHOUT GOOGL API KEY
+# 
+# 
+# # Define the bounding box for Vanuatu [min long, min lat, max long, max lat]
+# vanuatu_bbox <- c(168.30470, -17.72838, 168.31418 ,-17.71909 )
+# 
+# # # Get the map from Google Maps using ggmap
+# # vanuatu_map <- get_map(center = c(lon =168.3094 , lat = -17.72374 ),
+# #                        zoom = 8, maptype = "terrain")
+# 
+# # Get the map from OpenStreetMap using ggmap
+# vanuatu_map <- get_map(location = c(lon = mean(vanuatu_bbox[c(1, 3)]), lat = mean(vanuatu_bbox[c(2, 4)])), 
+#                        source = "osm", zoom = 8)
+# 
+# # Plot the map with points
+# ggmap(vanuatu_map) +
+#   geom_point(data = DataForModelLAT_vanuatu, aes(x = long, y = lat), color = "red") +
+#   theme_void()
+# 
+# 
+# # Plot the map with points
+# ggmap(vanuatu_map) +
+#   geom_point(data = DataForModelLAT, aes(x = long, y = lat), color = "red") +
+#   theme_void()
+```
+
+
+# Data Analysis for model training
+
+```{r}
+# Formatting and removing variables (QGIS version) 
+# DataForModel <-DataForModelQGIS %>%
+#   select(-c("VALUE", "x", "y" ,"SpatialRef", "geometry"))
+
+# Formatting and removing variables (lat-long version) 
+DataForModel <-DataForModelLAT %>%
+  select(-c("VALUE","lat", "long"))
+
+# Change class to right format (factor)
+DataForModel$class <- as.factor(DataForModel$class)  
+
+```
+
+### Summary statistics
+
+```{r}
+# keeping the name of the classes
+ClassesNames <- levels(DataForModel$class)
+
+# Number of obs. per class
+counts <- DataForModel %>%
+  count(class) %>%
+  arrange(n)  # Sort counts in ascending order
+
+# Reorder the categories based on counts
+DataForModel$class<- factor(DataForModel$class, levels = counts$class)
+
+# Graphic
+DataForModel %>%
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "") +
+  ggtitle("Land types ")
+```
+
+
+```{r, results=TRUE}
+datasummary_skim(DataForModel$class , type = "categorical"  )
+```
+
+
+```{r, results=TRUE, echo=TRUE}
+datasummary_skim(DataForModel , type = "numeric"  )
+```
+
+
+# Explanatory variables analysis
+
+We definethe list of explanatory variables (or *predictors*) 
+
+```{r}
+# Define the subset of variables (here X1, X, .., X8B, ...X12)
+predictor_vars <- DataForModel %>%
+  select(starts_with("b")) %>%
+  names()
+
+predictor_vars
+
+```
+
+
+
+## Maps 
+
+>  This can be done later. Here we leave this to  QGIS  
+
+```{r}
+# library(OpenStreetMap)
+# 
+#  upperLeft = c(-max(DataForModel$lat), min(DataForModel$long))
+# # 
+#  lowerRight = c(min(DataForModel$lat), max(DataForModel$long))
+# 
+# base_map  = openmap(upperLeft, lowerRight, type="osm")
+# 
+#  plot(base_map)
+
+```
+
+
+```{r}
+# map <- ggplot() +
+#   geom_point(data = DataForModel,
+#               aes(x = x, y = y, color = class),
+#               size = .6) +
+#  ggtitle("Points location on and X-Y grid") + 
+#          labs(x=  "X-axis used as Longitude" ,
+#               y = "Y-axis used as Latitude")+
+#   theme_classic()
+# 
+# 
+# map
+```
+
+
+
+```{r}
+# We compute the correlation matrix of the covariates
+corr_coef<-cor(DataForModel[, predictor_vars], use = "p")
+
+#And then plot it with nice options 
+ggcorrplot(corr_coef, 
+           type = "lower",         # lower triangle of the matrix only
+           #hc.order = TRUE,        # variable sorted from highest to lowest
+           outline.col = "white",  #Color options
+           lab = TRUE)
+```
+
+
+The data preparation & validation methods ends here, so let’s process to machine learning models.
+
+# Machine learning
+## Train and Validation data sets
+
+```{r }
+# Splits data into training and testing sets
+set.seed(007)
+# We'll randomly pick some observation from the full data set
+
+trainIndex <- createDataPartition(DataForModel$class, p = .80, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# Creating the two data sets: 
+train_data <- DataForModel[ trainIndex,]
+validation_data  <- DataForModel[-trainIndex,]
+
+```
+
+
+We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories distribution.  
+
+```{r,  results= TRUE }
+datasummary_skim(train_data$class , type = "categorical"  )
+```
+
+##  Missing values in the training data set
+
+```{r}
+# see https://rpubs.com/NguyenKhanh20/1069336
+
+anyNA(train_data)
+```
+
+> We do **not**  have missing values for any variables. 
+
+
+##  Selecting Cross Validation parameters
+
+```{r, include = FALSE, echo = FALSE}
+# function to set up random seeds when running on several cores 
+#  (you do not need to understand that)
+
+setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 2512) {
+  #B is the number of resamples and integer vector of M (numbers + tune length if any)
+  B <- if (method == "cv") numbers
+  else if(method == "repeatedcv") numbers * repeats
+  else NULL
+  
+  if(is.null(length)) {
+    seeds <- NULL
+  } else {
+    set.seed(seed = seed)
+    seeds <- vector(mode = "list", length = B)
+    seeds <- lapply(seeds, function(x) sample.int(n = 1000000, size = numbers + ifelse(is.null(tunes), 0, tunes)))
+    seeds[[length(seeds) + 1]] <- sample.int(n = 1000000, size = 1)
+  }
+  # return seeds
+  seeds
+}
+
+```
+
+```{r}
+# Summary function with six statistics of interest 
+# sixStats <- function(...) c(twoClassSummary(...), 
+#                             defaultSummary(...))
+```
+
+By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specify the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
+
+```{r controls}
+
+# control variables (see later)
+K <- 5
+Myrepeats <- 10
+rcvTunes <- 1 # tune number of models
+Myseed <- 2512
+
+```
+
+
+##  Random Forest
+
+We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
+
+Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
+
+Our final output will be based on the **majority vote** of the individual decision trees. 
+
+
+```{r, include = FALSE}
+# Repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                      numbers = K,
+                      repeats = Myrepeats, 
+                      tunes = 100,
+                      seed = Myseed)
+
+# Configure the trainControl argument for cross-validation
+K5_CV_seed <- trainControl(method = "cv", 
+                           number = K,
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+```
+
+
+###  Training the model on selected variables 
+
+We can decide to train the model on all the explanatory variables (using  `.` as right-hand side of the formula as below) or an only a subset of the variables that are available to us:
+
+* So using all variables would write  `rf_fit <- train(class ~ . ,  ... `
+* Alternatively, we could use a `formula`  and write `rf_fit <- train(formula, ... `
+
+For more flexibility, we use that second option here
+
+```{r}
+
+# And the formula becomes
+formula <- as.formula(paste("class ~", paste(predictor_vars, collapse = " + ")))
+```
+
+> Our `formula` is now `r paste("class ~", paste(predictor_vars, collapse = " + "))`  
+
+And we can train our model: 
+
+```{r, cache = FALSE}
+# Train your model using the subset of variables
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                trControl = K5_CV_seed)
+```
+
+
+```{r, results=TRUE}
+rf_fit
+```
+
+## Evaluating Model Performance 
+
+We can assess the quality of the model both *in sample*, that is how well the model estimates the data within the training data set  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
+
+## The *in sample* performance is:
+
+```{r, results=TRUE}
+rf_pred <- predict(rf_fit, train_data)
+# length(rf_pred)
+
+# Confusion, matrix
+ confusionMatrix(rf_pred, train_data$class)
+```
+
+
+We need now further investigation to see if the model generalizes well or if it just has learned from the training data. The high accuracy is a symptom of overfitting.
+
+### Variable importance
+
+
+```{r}
+GISVarImportance<- varImp(rf_fit, scale = FALSE)
+plot(GISVarImportance)
+```
+
+
+## The *Out of sample* performance 
+
+
+```{r, results=TRUE}
+rf_pred_Valid <- predict(rf_fit, validation_data)
+confusionMatrix(rf_pred_Valid, validation_data$class)
+```
+
+### Predicted classification on the validation sample
+
+```{r, results=TRUE}
+table(rf_pred_Valid)
+```
+# Optimizing Random Forests
+
+## Optimizing the combinations of variables 
+
+> A trick is to begin to optimize the random forest on our training process first. 
+
+
+We therefore begin by tuning the **number of possible variables** (*mtry*)   considered at each split in a decision tree. We do a grid search and compute the accuracy for each value of *mtry* $\in \{0,6\}$.
+
+```{r, cache = TRUE}
+# /!\ running this chunk can be long!
+tunegrid <- expand.grid(.mtry = (1:6)) 
+
+rf_gridsearch <- train(class ~ ., 
+                       data = train_data,
+                       method = 'rf',
+                       metric = 'accuracy',
+                       tuneGrid = tunegrid,
+                       ntree = 100)
+
+```
+
+
+
+```{r, results=TRUE}
+print(rf_gridsearch)
+```
+
+
+```{r mtryANDaccuracy}
+ggplot(data=rf_gridsearch$results, aes(Accuracy, x = mtry)) +
+  geom_line( colour = SIAP.color)+
+  geom_point(colour = "grey")+
+  ggtitle(label = "Optimizing the accuracy of the trained random forest model") +
+  labs(x = "Nb of variables considered at each split (mtry)" )+
+  theme_minimal()
+```
+
+```{r mtryANDkappa}
+ggplot(data=rf_gridsearch$results, aes(y = Kappa, x = mtry )) +
+  geom_line(color= SIAP.red)+
+  geom_point(colour = "grey")+
+  ggtitle(label = "Optimizing the Kappa of the trained random forest model") +
+  labs(x = "Nb of variables considered at each split (mtry)" )+
+  theme_minimal()
+```
+
+# Predicting
+
+
+## Importing CSV data to predict from QGIS (Raster image)
+We use the data from the whole area (each pixel) and predict on these. 
+
+```{r}
+# data directly exported from Jupyter notebook 
+QGISDataAllArea <- read.csv("Data/pixels4pred_AllArea_ptsBANDS_wkt.csv")
+
+```
+
+
+
+```{r}
+# Formatting and removing variables
+DataForPrediction <- QGISDataAllArea %>%
+  select(-c("cClassSCP", "x", "y", "nClassSCP","SpatialRef", "geometry"))
+
+# Renaming to compile With new version (from Blanca)
+library(stringr)
+DataForPrediction <- DataForPrediction %>%
+  rename_with(~ str_replace(., "^X", "b"), starts_with("X"))
+
+```
+
+## Predicting using our model 
+
+```{r}
+rf_pred_Full <- predict(rf_fit, DataForPrediction)
+```
+
+
+```{r}
+DataPredicted <- as.data.frame(cbind(rf_pred_Full, DataForPrediction))
+DataPredicted <- DataPredicted %>% 
+  mutate(PredictedClass = rf_pred_Full)
+
+```
+
+
+```{r}
+kable(DataPredicted)
+```
+
+### Exporting to QGIS
+
+```{r}
+# Adding spatial component to Data used for prediction
+PredictionForQGIS <- cbind(DataPredicted,QGISDataAllArea %>%
+  select(c("cClassSCP", "x", "y", "nClassSCP","SpatialRef", "geometry")) )
+
+# Exporting Data for QGIS
+write.csv(PredictionForQGIS, file = "Data/PredictionForQGIS.csv")
+
+```
+
+
+## Statistics on the prediction
+
+```{r}
+# Number of obs. per class
+counts <- DataPredicted %>%
+  count(PredictedClass) %>%
+  arrange(n)  # Sort counts in ascending order
+
+# Reorder the categories based on counts
+DataPredicted$PredictedClass<- factor(DataPredicted$PredictedClass, levels = counts$PredictedClass)
+
+# Graphic
+DataPredicted %>%
+ggplot() + 
+  geom_bar(aes(y = PredictedClass), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "") +
+  ggtitle("Land types ")
+```
+
+
+```{r, results=TRUE}
+datasummary_skim(DataPredicted$PredictedClass , type = "categorical"  )
+```
+
+# Advanced analysis 
+
+## Sensitivity to raw data 
+
+Imagine that the data collected on the ground had a small percentage of errors. How this would affect the model, and the final results? 
+
+Let's simulate that by introducing some errors in the training data set (*train_data*)
+
+```{r}
+# Define the percentage of error
+PercentChange <- 0.10
+NbOfChanges <- ceiling(nrow(train_data) * PercentChange)
+
+
+# Identify which rows to change
+set.seed(2512)  # <-- To be sure to regenerate the same sample  again and again 
+change_indices <- sample(1:nrow(train_data), NbOfChanges)
+```
+
+In total we changed `r NbOfChanges` observations (that's `r PercentChange*100` \%) over a total of `r nrow(train_data)` observations in the training data set 
+
+```{r}
+# Create a new variable class2 and tracking changes
+train_data$changed   <- FALSE
+train_data$changed[change_indices] <- TRUE 
+
+
+
+# We select randomly the new class
+train_data$class2 <-train_data$class
+train_data$class2[change_indices] <- sample(c("Reef", "Bare_soil", "Water", "Vegetation", "Built-up"),
+                                            length(change_indices), replace = TRUE)
+
+```
+
+
+```{r, results=TRUE}
+ train_data %>%
+  filter(changed == TRUE) %>%
+  select(class, class2, changed) %>%
+  kable()
+```
+
+
+### New model training 
+
+We use the same set of parameters, and the same set of predictors (*explanatory* variables) for training a new model on this  erroneous data set. We need to change the formula and use the new "*erroneous class*".
+
+```{r}
+# The formula now uses class2
+formula_class2 <- as.formula(paste("class2 ~", paste(predictor_vars, collapse = " + ")))
+```
+
+
+```{r, cache = FALSE}
+# Train your model using the subset of variables
+rf_fit_class2 <- train(formula_class2,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                trControl = K5_CV_seed)
+```
+
+
+```{r, results=TRUE}
+rf_fit_class2
+```
+
+
+## The *in-sample* performance is:
+
+```{r, results=TRUE}
+rf_pred_class2 <- predict(rf_fit_class2, train_data)
+
+# Confusion, matrix
+ confusionMatrix(rf_pred_class2, train_data$class2)
+```
+
+
+## The *out-of-sample* performance 
+
+
+```{r, results=TRUE}
+rf_pred_Valid2 <- predict(rf_fit_class2, validation_data)
+confusionMatrix(rf_pred_Valid2, validation_data$class)
+```
+
+### Predicted classification on the validation sample
+
+```{r, results=TRUE}
+table(rf_pred_Valid)
+```
+
