@@ -1,0 +1,1238 @@
+---
+title: "Pipeline for Agile Estimation of Land Accounts"
+subtitle: "PAELLA - Version 1.0"
+author: "Christophe Bontemps (SIAP) - Blanca Perez Lapena (ESCAP)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: true
+    highlight: tango
+    number_sections: no
+    theme: lumen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( message = FALSE, warning = FALSE, results =FALSE, echo = TRUE) 
+```
+
+
+
+## Installing the packages
+As usual when working with specific data, We need both generic and specific packages. We have 3 broad categories: 
+
+- Packages specific to GIS and maps such as  `sf` and `raster`
+- Packages specific to Data Science and Machine Learning, in particular the package `CARET` that embeds many models and post-estimation features and graphics
+- Generic packages for data management, visualization and dissemination such as `dplyr` and  `ggplot2`.   
+
+```{r packages}
+# GIS packages
+library(raster) ## for reading "RASTER" files
+library(sf)     ## read shapefiles
+library(rgdal)  ## for reading "shapefiles"
+library(sp)     ## for adjusting CRS in 
+library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r
+
+# Model fitting packages for ML
+library(rpart)
+library(caret)
+
+# File management
+library(readxl)
+# Tidy data management packages
+library(dplyr)
+library(data.table)
+library(modelsummary)
+library(ggcorrplot)
+library(forcats)
+
+# Plotting packages
+library(ggplot2)
+library(RColorBrewer)
+library("patchwork") # To combine plots
+
+# Nice presentation of results
+library(knitr)
+library(papeR)
+
+# My colors:
+SIAP.color <- "#0385a8"
+SIAP.red <- "#eb4034"
+
+```
+# Data and files management
+
+We will import and export files in different format, including GIS specific files in formats that can be *raster* (images) or *shapefiles* (vectors). Also, we will eed to combine, assemble and transform these files to use them as data frames for the Machine Learning model.  
+
+## Importing the Satelite images
+
+There are many data sources freely available with environmental information at a very detailed level. These files are from huge data bases that cover large areas of the word. 
+
+## a. Importing the stack of images
+From QGIS, we import the images that corresponds to the region of interest or **ROI**. The first element is to get the images from the satellite. 
+
+
+```{r}
+# import stacked raster (img) 
+# Needs  sf package 
+
+# Importing TIFF images 
+
+img <- brick("Data/GIS-ROI-V1/stacked_image_2020_20m.tif")
+```
+ 
+These are images taken with different bands and reflecting the nature of waves coming back from the satellite sensors. These will be our predictors, or explanatory variables, for our model, as the information is available for any point on the region.  
+
+```{r}
+plot(img)
+```
+
+
+##  b. Importing the shapefiles with  ground truth land classes
+
+Then, we have the "*ground truth*" or specific areas where we know the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
+
+```{r}
+# IMPORTANT: Folders for data follows the directory structure defined during course in July
+# This .Rmd  file is in "TRAINING_VANUATU_JULY2024_COMPLETE_SENT/Working_in_R"
+
+# Importing Shapefiles
+shp <- read_sf("../Data/Results/LC_2020/training_input/Training_data_SHP.shp")
+
+# Previously here shp <- read_sf("Data/GISBlanca/reference_dataset_ROIs/")
+```
+
+
+```{r}
+# extract classes and band information and put in a dataframe for later
+names(img) <- c("b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b8A", "b9", "b11", "b12")
+```
+
+## c. Matching the information from Raster (bands) with class values on the ground 
+
+We can now match the information from the ground truth, with what is available from the images (raster). This operation, that uses the exact location and a perfect geographical alignment, will provide a sample with both the information of the nature of the land (in classes)
+ and the information from the  satellite (predictors). 
+ 
+```{r}
+DataForModel <- terra::extract(img, shp, df = TRUE)
+
+# Creating class for each location 
+DataForModel$class <- as.factor(shp$MC_ID[match(DataForModel$ID, seq(nrow(shp)))])
+
+# We need a numeric variable as well 
+DataForModel <- DataForModel %>%
+   mutate(classnum = as.numeric(class))
+
+# DO NOT USE
+# It is easy to do mistakes and have categories mismatched as below!  
+# The code below is not correct
+
+# DataForModel <- left_join(DataForModel, shp, join_by("classnum"=="MC_ID"))
+# DataForModel <- DataForModel %>%
+#   select(-c("ID", "fid", "C_name", "C_ID", "SCP_UID", "geometry", "class")) %>%
+#   mutate(class = as.factor(MC_name))
+```
+
+
+We have now a data frame `DataForModel`with `r nrow(DataForModel)` observations. The data frame contains the land cover classification variable `class`  to predict, and several explanatory variables or *predictors*  `b1, b2, ...b12`.
+
+## Summary statistics
+
+```{r}
+# Let us define the classes with their names instead of numbers
+
+# Define the class labels
+class_labels <- c(
+  "1" = "Dense_vegetation",
+  "2" = "Pastureland_grassland",
+  "3" = "Other_vegetation", 
+  "4" = "Built-up", 
+  "5" = "Water",
+  "6" = "Reef", 
+  "7" = "Cloud"
+)
+
+# We affect labels as defined by class_labels, to the variable class
+DataForModel$class <- factor(DataForModel$class, levels = names(class_labels), labels = class_labels)
+
+```
+
+Let's have a look at the  sample created with **`r nrow(DataForModel)`**  observation:
+
+```{r, results=  TRUE}
+datasummary_skim(as.factor(DataForModel$class) , type = "categorical" , 
+                 notes = paste("N =", nrow(DataForModel)) )
+
+```
+
+
+```{r, echo = TRUE}
+# Graphic
+DataForModel %>%
+mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "") +
+  ggtitle("Land types ")
+```
+
+There is a  **class imbalance** in the explanatory variable `class`, with classes  *pasture land/ Grassland*  and *Other vegetation* being more numerous than other classes. We need to keep in mind as this may affect the machine Learning model.  
+
+
+
+## Predictors 
+The list of explanatory variables (or *predictors*) are the different bands from the satellite images. For each location, we have a value from each band stored in a variable ( $b_1$, $b_2$, $\cdots$, $b_{12}$ ). 
+
+```{r}
+# Define the subset of variables (here X1, X, .., X8B, ...X12)
+predictor_vars <- DataForModel %>%
+  select(starts_with("b")) %>%
+  names()
+
+predictor_vars
+
+```
+
+
+```{r, results=TRUE, echo=TRUE}
+datasummary_skim(select(DataForModel, predictor_vars) ,   type = "numeric",
+                 title = "Full data set (DataForModel)",
+                notes = paste("N =", nrow(DataForModel)) )
+```
+
+
+# Explanatory variables analysis
+
+It is always a good thing to explore the variables that we are going to use as predictor and try to find variables that are related to each other. Here the bands are not really easy to interpret but we can still see some patterns. 
+For example, the variable (band) **$b_5$** is not correlated with any other variable (except $b_{12}$). This means that its information is quite different from other variables. Also variables **$b_1$**, **$b_2$**, and **$b_3$** are quite correlated meaning that the information embedded in each of these bands is almost the same, and different from **$b_5$**.
+
+> We may then legitimately conclude  that these variables **$b_5$** and either **$b_1$**, **$b_2$**, or **$b_3$** may have some explanatory power on the land classes.
+
+```{r}
+# We compute the correlation matrix of the covariates
+corr_coef<-cor(DataForModel[, predictor_vars], use = "p")
+
+#And then plot it with nice options 
+ggcorrplot(corr_coef, 
+           type = "lower",         # lower triangle of the matrix only
+           #hc.order = TRUE,        # variable sorted from highest to lowest
+           outline.col = "white",  #Color options
+           lab = TRUE)
+```
+
+
+The data preparation & validation methods ends here, so let’s process to machine learning models.
+
+# Machine learning
+
+As usual in Machine Learning, we need to divide the original sample with `r nrow(DataForModel)`  into *training*  and *validation*  samples based on a  80-20\% rule. This has to be done randomly to avoid any pattern to be appearing in only one of the two samples that should have the same characteristics.  
+
+## Train and Validation data sets
+
+```{r }
+# Splits data into training and testing sets
+set.seed(007)
+# We'll randomly pick some observation from the full data set
+
+trainIndex <- createDataPartition(DataForModel$class, p = .80, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# Creating the two data sets: 
+train_data <- DataForModel[ trainIndex,]
+validation_data  <- DataForModel[-trainIndex,]
+
+```
+
+
+We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories distribution.  
+
+```{r,  results= TRUE }
+datasummary_skim(train_data$class , type = "categorical",
+                 title = "Train data set",
+                 notes = paste("N =", nrow(train_data))) 
+```
+
+
+```{r, echo = TRUE}
+# Graphics to compare 
+# train data set
+p_Train <- train_data %>%
+mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", 
+       title = "Land types",
+       subtitle = "Train data set", 
+        caption =  paste ( "N= ", nrow(train_data)))
+
+# Validation  
+p_Valid <- validation_data %>%
+mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", 
+       title = "Land types",
+       subtitle = "Validation data set", 
+        caption =  paste ( "N= ", nrow(validation_data)))
+
+
+# Combined plot 
+
+p_Train | p_Valid
+
+
+```
+
+
+
+##  Missing values in the training data set
+After creating the two sub-samples, it is good to chack whether the process worked well and has not created any missing obesrvation (that may happen). 
+
+```{r}
+# see https://rpubs.com/NguyenKhanh20/1069336
+
+anyNA(train_data)
+```
+
+> We do **not**  have missing values for any variables. 
+
+
+
+## Validation data set
+
+
+```{r,  results= TRUE }
+datasummary_skim(validation_data$class , type = "categorical",
+                 title = "Validation data set",
+                 notes = paste("N =", nrow(validation_data))) 
+```
+
+
+
+##  Selecting Cross Validation parameters
+
+```{r, include = FALSE, echo = FALSE}
+# function to set up random seeds when running on several cores 
+#  (you do not need to understand that)
+
+setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed = 2512) {
+  #B is the number of resamples and integer vector of M (numbers + tune length if any)
+  B <- if (method == "cv") numbers
+  else if(method == "repeatedcv") numbers * repeats
+  else NULL
+  
+  if(is.null(length)) {
+    seeds <- NULL
+  } else {
+    set.seed(seed = seed)
+    seeds <- vector(mode = "list", length = B)
+    seeds <- lapply(seeds, function(x) sample.int(n = 1000000, size = numbers + ifelse(is.null(tunes), 0, tunes)))
+    seeds[[length(seeds) + 1]] <- sample.int(n = 1000000, size = 1)
+  }
+  # return seeds
+  seeds
+}
+
+```
+
+```{r}
+# Summary function with six statistics of interest 
+# sixStats <- function(...) c(twoClassSummary(...), 
+#                             defaultSummary(...))
+```
+
+By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specify the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
+
+```{r controls}
+
+# control variables (see later)
+K <- 5
+Myrepeats <- 10
+rcvTunes <- 1 # tune number of models
+Myseed <- 2512
+
+```
+
+
+##  Random Forest
+
+We begin with fitting a Random Forest model using cross-validation on the *Training* data set 
+
+Random Forest is a *bagging* (*bootstrap aggregation*) method. During training a bootstrap sample is drawn from the training data together with a subset of the total amount of variables, we then pick the best available variable to split the tree into two daughter nodes repeatedly until we reach a stopping criterion. This process is repeated until we have trained as many individual decision trees as we want. We can then combine the output of the decision trees into one final output.
+
+Our final output will be based on the **majority vote** of the individual decision trees.
+
+
+> We may refer to the *caret* [package manual](https://topepo.github.io/caret/model-training-and-tuning.html) to learn about all the options and models available. The algorithm that will be conducted all along this exercise is the following:
+![](https://topepo.github.io/caret/premade/TrainAlgo.png)
+
+
+```{r, include = FALSE}
+# Repeated cross validation
+rcvSeeds <- setSeeds(method = "repeatedcv", 
+                      numbers = K,
+                      repeats = Myrepeats, 
+                      tunes = 100,
+                      seed = Myseed)
+
+
+# Configure the trainControl argument for cross-validation
+K5_CV_seed <- trainControl(method = "cv", 
+                           number = K,
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+```
+
+
+###  Training the model on selected variables 
+
+We can decide to train the model on all the explanatory variables (using  `.` as right-hand side of the formula as below) or an only a subset of the variables that are available to us:
+
+* So using all variables would write  `rf_fit <- train(class ~ . ,  ... `
+* Alternatively, we could use a `formula`  and write `rf_fit <- train(formula, ... `
+
+For more flexibility, we use that second option here:
+```{r}
+# And the formula becomes
+formula <- as.formula(paste("class ~", paste(predictor_vars, collapse = " + ")))
+```
+
+> Our `formula` is now `r paste("class ~", paste(predictor_vars, collapse = " + "))`  
+
+And we can train our model: 
+
+```{r, cache = FALSE}
+# Train your model using the subset of variables
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                trControl = K5_CV_seed)
+```
+
+```{r, results=TRUE}
+rf_fit
+```
+
+By default, `caret` does a minimal search on the number of variables used for each node of each tree, `mtry`. While training the model,  `caret` searched for 3 values of  `mtry`, here 2, 7  and  12 (all) and provides the value of the accuracy and Kappa for each of these choices.  By default, it will the  select the value that maximize the accuracy. Obviously, we can also try to optimize this choice and do our own selection. 
+
+## Playing with parameters for the RF model 
+
+The package `caret` allows a lot of testing for the "right" choice of parameters affecting random forest models.  In particular `mtry`  and `ntree`. Let us change these parameters and see how this affects our model accuracy 
+
+
+### The number of variables used for each node of each tree `mtry`
+By default, `caret`does a minimal search of 3 different numbers for `mtry` and selects the one that maximize accuracy. Let's change that parameter to do an extensive **grid search** up to the maximum possible. 
+ 
+ > Here the maximum number is 11 (12-1),  since we have "only" 12 predictor and we need at least one! 
+ 
+```{r}
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                tuneLength = 11, #  <- computes for 12 values of mtry
+                metric= "Kappa",  # we can choose the criteria (Kappa vs Accuracy)
+                trControl = K5_CV_seed)
+                
+                
+```
+
+```{r, results=TRUE}
+rf_fit
+```
+
+```{r}
+plot(rf_fit)
+# One can also plot the graphic with a different metric in mind.! 
+#plot(rf_fit, metric ="Kappa")
+
+```
+
+### The number of trees  used `ntree`
+
+Even better, we can combine the search of  `ntree` with the search if `mtry` using a grid search. Since we know that our best choice for  `mtry` was 7, we can impose that choice in our grid. 
+
+
+```{r, cache = TRUE}
+# /!\ running this chunk can be long!
+modellist <- list()
+
+# Uses the optimal mtry from the previous model
+grid <- expand.grid(.mtry=  7)
+
+#train with different ntree parameters, to find an optimal amount of trees
+for (ntree in c(50, 100, 250, 500)){
+  set.seed(2512)
+  fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                metric = 'Accuracy',
+                tuneGrid = grid,
+                trControl = K5_CV_seed,
+                ntree = ntree)
+  key <- toString(ntree)
+  modellist[[key]] <- fit
+}
+
+```
+
+```{r}
+#Compare results
+results <- resamples(modellist)
+summary(results)
+```
+
+
+```{r ntreeANDaccuracy}
+
+
+# We need to do a bit of rearrangement to have the results in a way easy to plot with ggplot 
+library(tidyr)
+
+results_long <- as.data.frame(results) %>%
+  tidyr::pivot_longer(cols = -c(Resample), names_to = "SampleSize", values_to = "accuracy")
+
+# Computing the lower bound for nice visual
+MyLowerY <-min(results_long$accuracy) - (0.2*(max(results_long$accuracy) - min(results_long$accuracy)) )
+
+# Ordering the  boxplot according to sample size
+results_long <- results_long %>%
+  mutate(SampleSize = factor(SampleSize, levels = sort(unique(as.numeric(SampleSize))))) 
+
+ ggplot(data= results_long)+
+  aes(x = SampleSize, y = accuracy) +
+  geom_boxplot(fill = SIAP.color, alpha = 0.3)+
+  geom_point(col = "grey")+
+  ylim(MyLowerY, 1)+
+  ggtitle(label = "Optimizing the accuracy of the Random Forest model") +
+  labs(x = "Number of trees (ntree)" )+
+  theme_minimal()
+  
+```
+
+
+
+### Evaluating Model Performance 
+
+We can assess the quality of the model both *in sample*, that is how well the model estimates the data within the training data set  and *out of sample* performance, where we compare predictions based on a validation data set ("*unseen data*"). 
+
+### The *in sample* performance is:
+
+```{r, results=TRUE}
+rf_pred <- predict(rf_fit, train_data)
+# length(rf_pred)
+
+# Confusion, matrix
+ confusionMatrix(rf_pred, train_data$class)
+```
+
+
+We need now further investigation to see if the model generalizes well or if it just has learned from the training data. The high accuracy is a symptom of overfitting.
+
+### Variable importance
+
+```{r}
+GISVarImportance<- varImp(rf_fit, scale = FALSE)
+plot(GISVarImportance)
+```
+
+### Final model selection
+Based on what we have discovered, it seems that selecting a Random Forest model with `mtry`= 7 and `ntree`= 250 should be a quite good option. Since we have quite imbalance classes, we also will rely more on the value of the  *kappa* parameter that in the pure accuracy in the remaining part of the analysis 
+
+```{r, cache = TRUE}
+# Uses the optimal mtry from the previous model
+
+grid <- expand.grid(.mtry=  7)
+ntree = 250
+
+#Train a model  with fixed mtry and ntree parameters, other parameters are as previously defined 
+rf_fit <- train(formula,
+                data = train_data,
+                method = "rf",
+                metric = 'kappa',
+                tuneGrid = grid,
+                trControl = K5_CV_seed,
+                ntree = ntree)
+  
+rf_fit
+
+```
+
+
+
+
+
+### The *Out of sample* performance 
+
+
+```{r, results=TRUE}
+rf_pred_Valid <- predict(rf_fit, validation_data)
+rf_CM <- confusionMatrix(rf_pred_Valid, validation_data$class)
+rf_CM
+```
+
+### Predicted classification on the validation sample
+
+Our validation sample has **`r nrow(validation_data)`** observations. Let's see how the prediction goes on these points: 
+
+
+```{r}
+pred_valid <-as.data.frame(rf_pred_Valid) 
+
+datasummary_skim(pred_valid , type = "categorical",
+                 title = "Prediction",
+                 notes = paste("N =", nrow(pred_valid))) 
+```
+
+
+## Multinomial Logistic model (MNL)
+
+As for the random forest model, we fist train our model on the `train_data` subsample. We only have to change the `method` in the code and in `train()`function to **multinom** (multinomial logit). 
+
+
+```{r, cache = FALSE}
+
+# Train your model using the training data set
+
+logi_fit <- train(formula,
+                data = train_data,
+                method = "multinom", 
+                trControl = K5_CV_seed,
+                trace = FALSE)
+logi_fit
+            
+```
+
+### The *in sample* performance is:
+
+```{r, results=TRUE}
+logi_pred <- predict(logi_fit, train_data)
+
+# Confusion, matrix
+confusionMatrix(logi_pred, train_data$class)
+```
+
+We need now further investigation to see if the model generalizes well or if it just has learned from the training data. 
+
+### Variable importance
+
+
+```{r}
+LogiVarImportance<- varImp(logi_fit, scale = FALSE)
+plot(LogiVarImportance)
+```
+
+> Interestingly, the logistic model does not exhibit the same "*important*" variables. Here $b_1$, $b_2$ and $b_{12}$ are highlighted as important for explaining the variable `class`, but not $b_5$. 
+
+### The *Out of sample* performance 
+
+
+```{r, results=TRUE}
+logi_pred_Valid <- predict(logi_fit, validation_data)
+logi_CM <- confusionMatrix(logi_pred_Valid, validation_data$class)
+logi_CM
+```
+# Adressing the imbalance problem
+
+## Using Kappa instead on accuracy 
+
+In the presence of imbalance classes, where one or several classes are significantly **underrepresented** compared to others, we should prefer using **kappa** instead of **accuracy** to select the best model.
+**Kappa** is similar to the classic accuracy measure, but it is able to take into consideration the data sets class imbalance. The definition is: 
+
+$$ \kappa = \frac{p_o-p_e}{1-p_e}  $$
+
+where $p_o$ is the accuracy of the model, and $p_e$ is the measure of the agreement between the model predictions and the actual class values as if happening by chance.^[See *e.g..* https://stats.stackexchange.com/questions/82162/cohens-kappa-in-plain-english for the detail of the computation of $p_e$.] The *Kappa* value indicates how much better the model is performing compared to a different model that makes random classifications based on the distribution of the target variable.
+
+For binary classification **Kappa** can be rewritten as an expression of True Positives (TP), False Negatives (FN), False Negatives (FN), and False Positives (FP):
+
+$$ \kappa = \frac{2(TP \cdot TN - FN \cdot FP)}{(TP + FP) \cdot (FP + TN)+ (TP+FN) \cdot (FN + TN)} $$
+
+## Resampling techniques
+
+There are several methods for handling imbalanced classes in a multivariate (multi-class) classification problem. Using the `caret` package, we can use several resampling techniques:
+
+- up-sampling, down-sampling,
+- SMOTE, and
+- ROSE
+
+The idea is always to resample to have a more balance sample with almost the same number of observation in each class and avoid over-predicting the dominant class. We can combine this with the choice of Kappa as the metric to select the "best" model. 
+
+
+### Up and down sampling 
+Both up-sampling and down-sampling are techniques that change the distribution of the classes by removing or duplicating observations.To do that, one randomly duplicate observations or remove some 
+
+- **Up**: increase the number of instances in the minority class (less frequent class) by randomly **duplicating** observations from the minority class or by generating synthetic examples using techniques like SMOTE (see below).
+
+- **Down**: decrease the number of instances in the majority class (most frequent class) by randomly **removing** observations from the majority class until the class distribution is balanced with the minority class.
+
+> Up-sampling increases the size of the dataset, while down-sampling decreases it.
+
+
+```{r}
+# Remember the set of parameters we were using 
+K5_CV_seed <- trainControl(method = "cv", 
+                           number = K,
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+# We just need to change one parameter there
+K5_CV_seed_up <- trainControl(method = "cv", 
+                           number = K,
+                           sampling = "up",   ## <-- Adding this will change the sampling distribution
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+
+rf_fit_up <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                metric= "Kappa", # Better for imbalance
+                trControl = K5_CV_seed_up)
+
+rf_fit_up
+
+```
+
+
+```{r}
+K5_CV_seed_down <- trainControl(method = "cv", 
+                           number = K,
+                           sampling = "down",   ## <-- Adding this will change the sampling distribution
+                           classProbs = FALSE, 
+                           savePredictions = TRUE,
+                           seeds = rcvSeeds,
+                           allowParallel = TRUE)
+
+
+rf_fit_down <- train(formula,
+                data = train_data,
+                method = "rf",
+                ntree = 100,
+                metric= "Kappa",
+                trControl = K5_CV_seed_down)
+
+rf_fit_down
+
+```
+
+
+## SMOTE (Synthetic Minority Over-sampling Technique)
+
+In that technique, one create a new training sample from the original one.
+SMOTE works by generating new **synthetic** examples that are close in the feature space (some twins). For each minority class example selected, SMOTE finds its k-nearest neighbors in the feature space (typically Euclidean distance is used). It then creates new examples by choosing one of the k-nearest neighbors randomly and using it to create a new synthetic instance at a randomly selected point between the chosen neighbor and the original example. By increasing the number of minority class samples, SMOTE helps to balance the class distribution and improve the performance of machine learning models in predicting the minority class. 
+
+ 
+```{r}
+library(smotefamily)
+
+# Apply SMOTE to the training data
+train_sub<- train_data%>% select(-contains(c("class", "Id")))
+smote_data <- SMOTE(train_sub, train_data$class, K = 5, dup_size = 0)
+
+# Convert the oversampled data into a proper data frame
+train_data_smote <- as.data.frame(smote_data$data)
+train_data_smote$class <- as.factor(train_data_smote$class)
+
+
+rf_fit_smote <- train(formula,
+                data =  train_data_smote,
+                method = "rf",
+                ntree = 100,
+                metric= "Kappa",
+                trControl = K5_CV_seed_down)
+
+rf_fit_smote
+```
+ 
+ 
+##  Comparing all models
+
+All these models use different parameters and have specific advantages and drawbacks. We may still want to compare their **predictive performances** on the various measures of fit. For that we will plot the distribution of the values of these indicators on all the validation samples, for each model.
+
+### Comparing acuracies
+
+It is important to compare models base on one of the "metrics" available. In our case, we will focus on "Accuracy" or "Kappa" as these are the most relevant. But one may as well be focusing on one particular class specificity if there is one class that one wish to predict well.  
+
+```{r modelsperf}
+models <- list( RF =rf_fit, 
+                Logit = logi_fit, 
+                RF_up = rf_fit_up,
+                RF_down = rf_fit_down, 
+                RF_Smote =  rf_fit_smote)
+                
+perf <- resamples(models)
+
+colvec <- c('#fbb4ae','#b3cde3','#ccebc5','#decbe4','#fed9a6','#ffffcc')
+
+# Compiling Accuracy
+boxplot(perf$values[c("RF~Accuracy", "Logit~Accuracy", 
+                      "RF_up~Accuracy", "RF_down~Accuracy", "RF_Smote~Accuracy")],
+        names = names(models), col=colvec,
+        main = "Accuracy",
+        sub = "Accuracy of all CV validation sets,on all models", 
+        frame.plot = FALSE)
+```
+
+### Comparing Kappa
+
+```{r modelskappa}
+# Compiling Kappa
+boxplot(perf$values[c("RF~Kappa", "Logit~Kappa", 
+                      "RF_up~Kappa", "RF_down~Kappa", "RF_Smote~Kappa")],
+        names = names(models), col=colvec,
+        main= "Kappa",
+        sub = "Kappa of all CV validation sets, on all models", 
+        frame.plot = FALSE)
+
+
+```
+
+> Depending on the criterion choosed and on the objective of the prediction, on may prefer one model to another. 
+
+# Predictions on the whole area
+
+We now take the whole image and predict on all pixels using the model that we estimated. 
+
+## Predictions with *Random Forest*
+While doing the prediction on the whole area (each pixel of the raster on the ROI), we  export the results to a *.tif* file that will be used in QGIS. 
+
+```{r}
+# We will store the prediction in a temp folder: 
+dir.create("Predictions_with_R", showWarnings = FALSE)
+
+# prediction with Random Forest model
+rf_result <- predict(img,
+                  rf_fit,
+                  filename = "Predictions_with_R/classification_fromRF.tif", # export to be used in QGIS
+                  overwrite = TRUE
+                  )  
+
+```
+
+
+```{r,  results= TRUE }
+Table_result <- as.data.frame(rf_result) %>%
+  mutate(class =  as.factor(classification_fromRF))
+
+# We affect labels as defined by class_labels, to the variable class
+Table_result$class <- factor(Table_result$class, levels = names(class_labels), labels = class_labels)
+
+# Table_result <- left_join(Table_result, shp, join_by("classification_fromR"=="MC_ID")) %>%
+#   mutate(class = as.factor(MC_name)) %>%
+#  select(-c( "fid", "C_name", "MC_name", "C_ID", "SCP_UID", "geometry")) 
+```
+
+
+```{r,  results= TRUE }
+datasummary_skim(Table_result , type = "categorical",
+                 title = "Prediction on the whole region",
+                 notes = paste("N =", nrow(Table_result))) 
+```
+
+
+```{r}
+# Graphic
+Table_result %>%
+mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", subtitle = paste ( "Random Forest model. N= ", nrow(Table_result)))  +
+  ggtitle("Land types predicted on the whole area ")
+```
+
+
+## Predictions with a  *Multinomial Logistic* model (MNL)
+
+```{r}
+# Prediction with Multinomial Logistic
+logi_result <- predict(img,
+                  logi_fit,
+                  filename = "Predictions_with_R/classification_fromlogi.tif",  # Export to QGIS
+                  overwrite = TRUE
+                  )  
+
+```
+
+
+```{r,  results= TRUE }
+Table_result_logi <- as.data.frame(logi_result) %>%
+  mutate(class =  as.factor(classification_fromlogi))
+
+# We affect labels as defined by class_labels, to the variable class
+Table_result_logi$class <- factor(Table_result_logi$class, levels = names(class_labels), labels = class_labels)
+
+
+```
+
+
+```{r,  results= TRUE }
+datasummary_skim(Table_result_logi , type = "categorical",
+                 title = "Prediction on the whole region",
+                 notes = paste("N =", nrow(Table_result_logi))) 
+```
+
+
+```{r}
+# Graphic
+Table_result_logi %>%
+mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+ggplot() + 
+  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", subtitle = paste ( "Multinomial Logistic model. N= ", nrow(Table_result_logi)))  +
+  ggtitle("Land types predicted on the whole area ")
+```
+
+
+## Visualizing the predictions
+
+
+```{r}
+# Load necessary libraries
+library(terra)
+
+# Read the TIFF file from the Random forest model
+raster_data <- rast("Predictions_with_R/classification_fromRF.tif")
+
+# Convert the raster to a data frame for ggplot2
+raster_df_RF <- as.data.frame(raster_data, xy = TRUE)
+
+
+# define the color palette associated with classes
+class_colors <- c(
+   "darkgreen",     # Dense vegetation
+  "#DEB887",        # Pastureland/grassland
+  "#339933",        # Other vegetation
+  "#e60000",        # "Built-up", 
+  "darkblue",        # Water
+  "lightblue",      # Reef
+  "darkgrey"            # Cloud
+)
+
+
+# Convert raster values to a factor with labels
+raster_df_RF$classification_fromRF <- factor(raster_df_RF$classification_fromRF, levels = names(class_labels), labels = class_labels)
+```
+
+
+
+```{r}
+# Plot using ggplot2
+p_RF <- ggplot() +
+  geom_raster(data = raster_df_RF, aes(x = x, y = y, fill = classification_fromRF), alpha = 0.5 ) +
+  scale_fill_manual(values = class_colors, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Prediction (with RF) ",
+       subtitle = paste("Note: Out-of-sample kappa was ", as.character(round(rf_CM$overall[2], 4)) ), 
+       caption =  paste ( "N= ", nrow(raster_df_RF)),
+       x = "Longitude",
+       y = "Latitude")
+# Plot
+p_RF
+
+```
+
+### Predictions of the MNL model
+
+
+```{r}
+# Read the TIFF file from the Multinomial logistic  model
+raster_data_logi<- rast("Predictions_with_R/classification_fromlogi.tif")
+
+# Convert the raster to a data frame for ggplot2
+raster_df_logi <- as.data.frame(raster_data_logi, xy = TRUE)
+
+# Convert raster values to a factor with labels
+raster_df_logi$classification_fromlogi <- factor(raster_df_logi$classification_fromlogi, levels = names(class_labels), labels = class_labels)
+```
+
+
+
+```{r}
+# Plot using ggplot2
+p_logi <- ggplot() +
+  geom_raster(data = raster_df_logi, aes(x = x, y = y, fill = classification_fromlogi), alpha = 0.5 ) +
+  scale_fill_manual(values = class_colors, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Prediction (MNL) ",
+       subtitle = paste("Note: Out-of-sample kappa was ", as.character(round(logi_CM$overall[2], 4)) ), 
+       caption =  paste ( "N= ", nrow(raster_df_logi)),
+       x = "Longitude",
+       y = "Latitude")
+# Plot
+p_logi
+
+```
+
+
+```{r}
+
+# Combine the plots
+# removing the legend for one plot 
+p_RF <- p_RF + theme(legend.position = "none")
+p_logi <- p_logi + theme(legend.position = "none")
+
+
+RFvslogi <- (p_RF |  p_logi) 
+
+# Display the combined plot
+print(RFvslogi)
+```
+```{r}
+# Merge the data frames on x and y coordinates
+combined_df <- raster_df_RF %>%
+  inner_join(raster_df_logi, by = c("x", "y")) %>%
+  rename(prediction_RF = classification_fromRF, prediction_logi = classification_fromlogi)
+
+# Create a new column indicating whether the predictions are the same or different
+combined_df <- combined_df %>%
+  mutate(diff = ifelse(prediction_RF == prediction_logi, "No Change", "Change")) %>%
+  mutate(diff_class = ifelse(prediction_RF == prediction_logi, prediction_RF, "8"))
+
+# Define the  augmented color class labels with the category "Difference" 
+class_labels_N <- c(class_labels, "8" = "Difference")
+
+# Define the augmented color palette accordingly 
+class_colors_N <- c(class_colors, "white")
+
+# Convert raster values to a factor with labels
+combined_df$diff_class <- factor(combined_df$diff_class, levels = names(class_labels_N), labels = class_labels_N)
+```
+
+
+ It can be imoortant to compute the differences and visualize where are the differences in prediction: 
+ 
+```{r}
+nb_diff <- combined_df %>%
+  filter(diff=="Change") %>%
+  nrow()
+pc_diff <- round(100 * nb_diff / nrow(combined_df),2)
+```
+
+
+
+
+```{r}
+#Plot the map pf difference"s
+p_diff <- combined_df%>%
+  filter(diff =="Change") %>%
+  ggplot()+
+  aes(x = x, y = y) +
+  geom_raster(aes(fill = diff_class)) +
+ scale_fill_manual(values = "black", name = "Legend") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Predictions differences",
+       subtitle = paste("In total, ", pc_diff, "% of the pixels are different") ,
+       x = "Longitude", y = "Latitude")
+
+p_diff
+
+```
+
+
+
+```{r}
+#Plot the map highlighting changes
+p_RF_diff <- ggplot(combined_df, aes(x = x, y = y)) +
+  geom_raster(aes(fill = diff_class),  alpha = 0.5) +
+ scale_fill_manual(values = class_colors_N, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Predictions differences",
+       subtitle = "RF predictions vs MNL predictions",
+       x = "Longitude", y = "Latitude")
+
+p_RF_diff
+
+```
+
+### Statistics on the differences 
+
+> How important are the differences between the 2 models? 
+
+
+```{r}
+combined_df %>%
+  filter(diff=="Change") %>%
+  mutate(prediction_RF = fct_infreq(prediction_RF) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+  ggplot() + 
+  geom_bar(aes(y = prediction_RF), colour="white", fill = SIAP.color,) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", 
+       subtitle = paste ( "N= ", nrow(combined_df %>% filter(diff=="Change")), "differences (", pc_diff, "% )")
+       )  +
+  ggtitle("Which categories have more differences?  ")
+  
+
+```
+
+
+
+```{r}
+knit_exit()
+```
+
+### Comparing Random Forest model with Blanca's RF model
+
+```{r}
+
+# Read the TIFF file
+raster_RF_Blanca <- rast("Data/GISBlanca/R_RF_Classification_2020.tif")
+
+# Convert the raster to a data frame for ggplot2
+raster_df_Blanca <- as.data.frame(raster_RF_Blanca, xy = TRUE)
+
+# Convert raster values to a factor with labels
+raster_df_Blanca$R_RF_Classification_2020 <- factor(raster_df_Blanca$R_RF_Classification_2020, levels = names(class_labels), labels = class_labels)
+
+
+# Plot using ggplot2
+p_Blanca <- ggplot() +
+  geom_raster(data = raster_df_Blanca, aes(x = x, y = y, fill = R_RF_Classification_2020), alpha = 0.5 ) +
+  scale_fill_manual(values = class_colors, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Prediction (from Blanca) ",
+       x = "Longitude",
+       y = "Latitude")
+
+p_Blanca
+
+```
+
+### Visualizing the differences
+
+
+
+```{r}
+# Combine the plots
+# removing the legend for one plot 
+p_RF <- p_RF + theme(legend.position = "none")
+p_Blanca <- p_Blanca + theme(legend.position = "none")
+
+
+RFvsBlanca <- (p_RF |  p_Blanca) 
+
+# Display the combined plot
+print(RFvsBlanca)
+```
+
+```{r}
+# Computing the differences
+
+# Merge the data frames on x and y coordinates
+combined_df <- combined_df %>%
+  inner_join(raster_df_Blanca, by = c("x", "y")) %>%
+  rename(prediction_Blanca = R_RF_Classification_2020)
+
+# Create a new column indicating whether the predictions are the same or different
+combined_df <- combined_df %>%
+  mutate(diff_Q = ifelse(prediction_RF == prediction_Blanca, "No Change", "Change"))%>%
+   mutate(diff_class_Q = ifelse(prediction_RF ==prediction_Blanca, prediction_RF, "8"))
+
+# Convert raster values to a factor with labels
+combined_df$diff_class_Q <- factor(combined_df$diff_class_Q, levels = names(class_labels_N), labels = class_labels_N)
+
+
+```
+
+
+```{r}
+
+#Plot the map highlighting changes
+p_full <- ggplot(combined_df, aes(x = x, y = y)) +
+  geom_raster(aes(fill = diff_class_Q ), alpha = 0.5 ) +
+ scale_fill_manual(values = class_colors_N, name = "Land Cover") +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = "Predictions differences",
+       subtitle = "RF predictions vs Blanca's predictions",
+       x = "Longitude", y = "Latitude")
+
+p_full
+
+```
+
+
+
+```{r}
+knit_exit()
+```
+
+
+
+### Statistics on the differences 
+
+```{r}
+nb_diff <- combined_df %>%
+  filter(diff=="Change") %>%
+  nrow()
+pc_diff <- round(100 * nb_diff / nrow(combined_df),2)
+```
+
+
+```{r}
+combined_df %>%
+  filter(diff=="Change") %>%
+  mutate(prediction_RF = fct_infreq(prediction_RF) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+  ggplot() + 
+  geom_bar(aes(y = prediction_RF), colour="white", fill = SIAP.color,) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", 
+       subtitle = paste ( "N= ", nrow(combined_df %>% filter(diff=="Change")), "differences (", pc_diff, "% )")
+       )  +
+  ggtitle("Which categories have more differences?  ")
+  
+
+```
+
+
+
+
+```{r}
+library("patchwork")
+# Combine the plots
+# removing the legend for one plot 
+p_RF <- p_RF + theme(legend.position = "none")
+p_QGIS <- p_QGIS + theme(legend.position = "none")
+p_diff <- p_diff + theme(legend.position = "none")
+p_full <- p_full + theme(legend.position = "bottom")
+
+combined_plot <- (p_RF |  p_QGIS) / (p_diff + p_full)  
+
+# Display the combined plot
+print(combined_plot)
+```
+
+
+```{r}
+knit_exit()
+```
+
