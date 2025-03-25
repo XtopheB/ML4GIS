@@ -1,10 +1,9 @@
 ---
 title: "A Pipeline for Agile Estimation of Land Accounts"
-subtitle: "PAELLA - Component 2 - V1.0"
+subtitle: "PAELLA - Component 2 - V1.2"
 author: "Christophe Bontemps (SIAP) - Blanca Perez Lapena (ESCAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
-  pdf_document: default
   html_document:
     code_folding: show
     toc: yes
@@ -12,6 +11,7 @@ output:
     highlight: tango
     number_sections: no
     theme: lumen
+  pdf_document: default
   word_document: default
 ---
 
@@ -43,7 +43,7 @@ As usual when working with specific data, We need both generic and specific pack
 # GIS packages
 library(raster) ## for reading "RASTER" files
 library(sf)     ## read shapefiles
-library(rgdal)  ## for reading "shapefiles"
+#library(rgdal)  ## for reading "shapefiles"
 library(sp)     ## for adjusting CRS in 
 library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r
 
@@ -76,6 +76,15 @@ SIAP.red <- "#eb4034"
 ```
 # Data and files management
 
+Firstly, we must define the year under study. We'll put that into parameters that will be used now consistently over the whole program. 
+
+```{r}
+MyDir <- "GIS-ROI-V2"
+StudyYear  <- 2020
+```
+
+> The year under study is  **`r StudyYear `**
+
 We will import and export files in different format, including GIS specific files in formats that can be *raster* (images) or *shapefiles* (vectors). Also, we will eed to combine, assemble and transform these files to use them as data frames for the Machine Learning model.  
 
 ## Importing geospatial information
@@ -89,7 +98,7 @@ From QGIS, we import the images that corresponds to the island of Efate.
 # import stacked raster (TIFF images)  
 # Needs  sf package 
 
-img <- brick("Data/GIS-ROI-V1/stacked_image_2020_20m.tif")
+img <- brick(paste0("Data/",MyDir,"/stacked_image_",StudyYear,"_20m.tif"))
 ```
  
 These are images taken with different bands and reflecting the nature of waves coming back from the satellite sensors. These will be our predictors, or explanatory variables, for our model, as the information is available for any point on the region.  
@@ -98,16 +107,16 @@ These are images taken with different bands and reflecting the nature of waves c
 plot(img)
 ```
 
-
 ##  b.  ROIs or "ground truth land classes" (shapefiles)
 
-The Region of Intereest or **ROIs** are also called  "*ground truth*"  areas where we *know* or *observed*  the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
+The Region of Interest or **ROIs** are also called  "*ground truth*"  areas where we *know* or *observed*  the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
 
 > **TODO:** See Blanca's message for explanation on the construction of the ROIs
 
 ```{r, cache = TRUE}
 # Importing ROIs (Shapefiles)
-shp <- read_sf("Data/GIS-ROI-V1/ROIs_noCloud/")
+
+shp <- read_sf(paste0("Data/",MyDir,"/ROI",StudyYear,"/"))
 ```
 
 
@@ -130,9 +139,12 @@ DataForModel$class <- as.factor(shp$MC_ID[match(DataForModel$ID, seq(nrow(shp)))
 DataForModel <- DataForModel %>%
    mutate(classnum = as.numeric(class))
 
+##  Keeping the number of classes
+NbClass <- length(unique(DataForModel$class))
+
 ```
 
->**TODO** We can label the land classes for a better interpretation and visualization
+>**TODO** We can label the `r NbClass` land classes for a better interpretation and visualization
 
 
 ```{r eval=FALSE, include=FALSE}
@@ -158,8 +170,8 @@ DataForModel$class <- factor(DataForModel$class, levels = names(class_labels), l
 
 
 ```{r}
-# Saving the Dataset for Modeling as a csv file to avoid rerunning theselengthy steps
-save(DataForModel, file = "Data/GIS-ROI-V1/DataForModel.Rda")
+# Saving the Dataset for Modeling as a csv file to avoid rerunning these lengthy steps
+save(DataForModel, file = paste0("Data/",MyDir,"/DataForModel.Rda"))
 
 # Uncomment to load the data
 # load("Data/GIS-ROI-V1/DataForModel.Rda")
@@ -171,12 +183,6 @@ We have now a data frame `DataForModel`with `r nrow(DataForModel)` observations.
 ## Summary statistics
 
 Let's have a look at the  sample created with **`r nrow(DataForModel)`**  observations:
-
-```{r, results=  TRUE}
-datasummary_skim(as.factor(DataForModel$class) , type = "categorical" , 
-                 notes = paste("N =", nrow(DataForModel)) )
-
-```
 
 
 
@@ -482,22 +488,55 @@ rf_fit
 # Best number of trees
 mtry_best <- rf_fit$bestTune[[1]]
 ```
-The results, in terms of accuracy (or Kappa) can be visualized to identify the best value for the number of regressors per  `mtry` leading to the highest accuracy.  
+The results, in terms of accuracy (or *Kappa*) can be visualized to identify the best value for the number of regressors per  `mtry` leading to the highest accuracy.  
 
 
 ```{r}
-pfit_A <- plot(rf_fit, metric = "Accuracy")
-# One can also plot the graphic with a different metric in mind.! 
-pfit_K <-  plot(rf_fit, metric ="Kappa")
+# Getting the results
+rf_results <- rf_fit$results
 
-# Combined plot 
-par(mfrow=c(1,2))
- pfit_A
- pfit_K 
+# Plot of accuracy
+p_A <- ggplot(rf_results, aes(x = mtry, y = Accuracy)) +
+  geom_line(color = SIAP.color) +
+  geom_point(size = 1, color = SIAP.color) +
+  scale_x_continuous(breaks = seq(min(rf_results$mtry), max(rf_results$mtry), by = 1)) +
+  labs(
+    title = "Random Forest Accuracy by mtry",
+    subtitle = paste("Year: ", StudyYear,""),
+    x = "Number of Variables at Each Split (mtry))",
+    y = "Accuracy"
+  ) +
+  theme_minimal()
+
+# Plot of Kappa
+p_K <- ggplot(rf_results, aes(x = mtry, y = Kappa)) +
+  geom_line(color = SIAP.color) +
+  geom_point(size = 1, color = SIAP.color) +
+  scale_x_continuous(breaks = seq(min(rf_results$mtry), max(rf_results$mtry), by = 1)) +
+  labs(
+    title = "Random Forest Kappa by mtry",
+    subtitle = paste("Year: ", StudyYear),
+    x = "Number of Variables  at Each Split (mtry))",
+    y = "kappa"
+  ) +
+  theme_minimal()
+
+# Combine the plots
+p_A |  p_K
 
 ```
 
+
+
+
 From these graphics, we can conclude that the we should select **`r mtry_best`  regressors** per trees in the random forest model, and then set the `mtry` parameter accordingly (to `r mtry_best`).
+
+
+```{r EX,  include=FALSE}
+knit_exit()
+```
+
+
 
 ### The number of trees  used `ntree`
 
@@ -1350,7 +1389,7 @@ print(combined_plot)
 ```
 
 
-```{r include=FALSE}
+```{r EXIT, include=FALSE}
 knit_exit()
 ```
 
