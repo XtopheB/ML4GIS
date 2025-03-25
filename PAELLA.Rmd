@@ -722,7 +722,7 @@ cm_df %>%
 
 ### Predicted classification on the validation sample
 
-Our validation sample has **`r nrow(validation_data)`** observations. Let's see how the prediction goes on the different land classes
+Our validation sample has **`r nrow(validation_data)`** observations. Let's see how the prediction goes on the different land classes.
 
 
 ```{r, results= TRUE}
@@ -733,11 +733,9 @@ datasummary_skim(pred_valid , type = "categorical",
                  notes = paste("N =", nrow(pred_valid))) 
 ```
 
-### Visualizing the model prediction per category   
+### Visualizing the model prediction per class  
 
-This graphic is an attempt to visualize where the model is not predicting well... TBC with numbers of predictions directly on the bars., etc...
- 
-
+It is important to visualize *where* - that is for which class - the model is predicting well, or is overpredicting or underpredicting. 
 
 ```{r}
 # A complex to construct, but easy to read, graphic on prediction per category!
@@ -748,7 +746,6 @@ comparison <- data.frame(
   Actual = validation_data$class
   )
  
-
 # Reshape the data into a long format
 comparison_long <- comparison %>%
   pivot_longer(
@@ -771,8 +768,8 @@ ggplot()+
   geom_bar(stat = "identity", position = "identity", width = 0.5, alpha = 0.5) +
   scale_fill_manual(values = c("Prediction" = SIAP.color, "Actual" = SIAP.red)) +
   labs(
-    title = " Observations vs Predictions (on validation sample)",
-    subtitle = " Red means underpredicting the current category \n Blue means overpredicting that category",
+    title = paste("Observations vs Predictions (",outsample_accuracy, "% on the validation sample)"),
+    subtitle = "Red means underpredicting the current category \n Blue means overpredicting that category",
     caption = paste("Grey = Correct prediction, Red = Observed (not predicted), 
                     Blue = Predicted (not observed)\n N=", nrow(validation_data)), 
     y = "Land type",
@@ -1004,6 +1001,13 @@ boxplot(perf$values[c("RF~Kappa", "Logit~Kappa",
 
 > **TODO**
 
+```{r}
+logi_pred_Valid <- predict(logi_fit, validation_data)
+logi_CM <- confusionMatrix(logi_pred_Valid, validation_data$class)
+
+
+```
+
 
 
 
@@ -1033,8 +1037,8 @@ Table_result <- as.data.frame(rf_result) %>%
   mutate(class =  as.factor(classification_fromRF))
 
 # We affect labels as defined by class_labels, to the variable class
-##  TODO: Classes !!!
-# Table_result$class <- factor(Table_result$class, levels = names(class_labels), labels = class_labels)
+
+Table_result$class <- factor(Table_result$class, levels = names(class_labels), labels = class_labels)
 
 # Table_result <- left_join(Table_result, shp, join_by("classification_fromR"=="MC_ID")) %>%
 #   mutate(class = as.factor(MC_name)) %>%
@@ -1081,8 +1085,8 @@ Table_result_logi <- as.data.frame(logi_result) %>%
   mutate(class =  as.factor(classification_fromlogi))
 
 # We affect labels as defined by class_labels, to the variable class
-## TODO
-#Table_result_logi$class <- factor(Table_result_logi$class, levels = names(class_labels), labels = class_labels)
+
+Table_result_logi$class <- factor(Table_result_logi$class, levels = names(class_labels), labels = class_labels)
 
 
 ```
@@ -1112,11 +1116,6 @@ Table_result_logi %>%
 > **TODO**
 
 
-```{r EXIT0}
-knit_exit()
-```
-
-
 ## Visualizing the predictions
 
 
@@ -1131,14 +1130,23 @@ raster_df_RF <- as.data.frame(raster_data, xy = TRUE)
 
 # define the color palette associated with classes
 class_colors <- c(
-   "darkgreen",     # Dense vegetation
-  "#DEB887",        # Pastureland/grassland
-  "#339933",        # Other vegetation
-  "#e60000",        # "Built-up", 
-  "darkblue",        # Water
-  "lightblue",      # Reef
-  "darkgrey"            # Cloud
+   '#4d926f',  # Dense Forest
+   '#6dcf9c',  # Open Forest
+#   '#39f7c8',  # Forest Plantation
+   '#3a5739',  # Mangroves
+   '#d2c212',  # Agriculture
+   '#e44ae7',  # Coconut Plantation
+   '#848099',  # Grassland
+   '#dc1010',  # Built-up Infrastructure
+   '#008aa2',  # Water Body
+    '#d7b084',  # Shrubs
+    '#a06620',  # Bareland
+    '#fcfefc',  # Cloud
+    '#9bd9e1'  # Reef
+  
 )
+  
+  
 
 
 # Convert raster values to a factor with labels
