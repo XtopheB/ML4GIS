@@ -277,7 +277,8 @@ validation_data  <- DataForModel[-trainIndex,]
 We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories distribution.  
 
 ```{r,  results= TRUE }
-datasummary_skim(train_data$class , type = "categorical",
+
+as.data.frame(train_data$class) %>% datasummary_skim( type = "categorical",
                  title = "Train data set",
                  notes = paste("N =", nrow(train_data))) 
 ```
@@ -499,11 +500,15 @@ rf_results <- rf_fit$results
 p_A <- ggplot(rf_results, aes(x = mtry, y = Accuracy)) +
   geom_line(color = SIAP.color) +
   geom_point(size = 1, color = SIAP.color) +
+  # Highlight the optimal point
+  geom_point(data = rf_results %>% filter(mtry == mtry_best), 
+             aes(x = mtry, y = Accuracy),
+             color = SIAP.red, size = 2) +
   scale_x_continuous(breaks = seq(min(rf_results$mtry), max(rf_results$mtry), by = 1)) +
   labs(
     title = "Random Forest Accuracy by mtry",
     subtitle = paste("Year: ", StudyYear,""),
-    x = "Number of Variables at Each Split (mtry))",
+    x = "Nb of Variables at Each Split (mtry))",
     y = "Accuracy"
   ) +
   theme_minimal()
@@ -516,7 +521,7 @@ p_K <- ggplot(rf_results, aes(x = mtry, y = Kappa)) +
   labs(
     title = "Random Forest Kappa by mtry",
     subtitle = paste("Year: ", StudyYear),
-    x = "Number of Variables  at Each Split (mtry))",
+    x = "Nb of Variables  at Each Split (mtry))",
     y = "kappa"
   ) +
   theme_minimal()
@@ -527,20 +532,16 @@ p_A |  p_K
 ```
 
 
-
-
 From these graphics, we can conclude that the we should select **`r mtry_best`  regressors** per trees in the random forest model, and then set the `mtry` parameter accordingly (to `r mtry_best`).
-
-
-```{r EX,  include=FALSE}
-knit_exit()
-```
-
 
 
 ### The number of trees  used `ntree`
 
 Even better, we can combine the search of  `ntree` with the search if `mtry` using a grid search. Since we know that our best choice for  `mtry` was to use only `r mtry_best`  regressors per trees in the random forest, we can impose that choice in our grid. 
+
+```{r EX,  include=FALSE}
+knit_exit()
+```
 
 
 ```{r, cache = TRUE, echo=FALSE}
@@ -564,9 +565,7 @@ for (i_ntree in c(50, 100, 250, 500)){
   modellist[[key]] <- fit
 }
 
-
 ntree_best <- fit$dots$ntree
-
 ```
 
 ```{r include=FALSE}
@@ -674,7 +673,22 @@ We now apply the model to the validation sample, that has not been used for trai
 ```{r, results=TRUE}
 rf_pred_Valid <- predict(rf_final_fit, validation_data)
 rf_CM <- confusionMatrix(rf_pred_Valid, validation_data$class)
-rf_CM$table
+# rf_CM$table
+```
+```{r}
+# Convert the confusion matrix to a data frame
+cm_df <- as.data.frame(rf_CM$table)
+
+
+# Plot with reversed Y-axis and added total column
+cm_df %>%
+  ggplot(aes(x = Reference, y = fct_rev(Prediction), fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 5) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Confusion Matrix", x = "Predicted", y = "Actual") +
+  theme_minimal()+
+  theme (legend.position ="none")
 ```
 
 ### Predicted classification on the validation sample
@@ -729,7 +743,8 @@ ggplot()+
   scale_fill_manual(values = c("Prediction" = SIAP.color, "Actual" = SIAP.red)) +
   labs(
     title = " Observations vs Predictions",
-    subtitle = "Grey = correct prediction, Red = Observed (not predicted),  Blue = Predicted (not observed)", ,
+    caption = "Grey = Correct prediction, Red = Observed (not predicted),  Blue = Predicted (not observed)",
+    subtitle = " Red means underpredicting the current category \n Blue means overpredicting that category", 
     y = "Land type",
     x = "Count",
     fill = "Type"
