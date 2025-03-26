@@ -132,7 +132,17 @@ We can now match the information from the ground truth, with what is available f
 ```{r, cache=TRUE}
 DataForModel <- terra::extract(img, shp, df = TRUE)
 
-# Creating class for each location 
+# Checks
+unique(shp$MC_name)
+# Class 3 does not exist! 
+
+totto <- shp %>%
+  select("MC_ID", "MC_name") %>%
+   distinct() %>%
+  arrange(MC_ID, MC_name)
+  
+  
+# Assigning class for each location 
 DataForModel$class <- as.factor(shp$MC_ID[match(DataForModel$ID, seq(nrow(shp)))])
 
 # We need a numeric variable as well 
@@ -141,6 +151,7 @@ DataForModel <- DataForModel %>%
 
 ##  Keeping the number of classes
 NbClass <- length(unique(DataForModel$class))
+NbClass
 
 ```
 
@@ -167,16 +178,31 @@ class_labels <- c(
 "13" = "Reef"
 )
 
-# We affect labels as defined by class_labels, to the variable class
-DataForModel$class <- factor(DataForModel$class, levels = names(class_labels), labels = class_labels)
+# Searching for a solution to the class labels since #3 originally does not exist!
+
+class_labels_12 <- c(
+"1" = "Dense_Forest",
+"2" = "Open_Forest",
+"3" = "Mangroves",
+"4" = "Agriculture",                    
+"5" = "Coconut_Plantation",             
+"6" = "Grassland",                      
+"7" = "Built_up",  
+"8" = "Water_body",                     
+"9" =  "Shrubs",                        
+"10" = "Bareland",                      
+"11" = "Cloud",                         
+"12" = "Reef"         
+)
+
+# We affect labels as defined by class_labels with 12 levels sequentially, to the variable class
+# DataForModel$class <- factor(DataForModel$class, levels = names(class_labels_12), labels = class_labels_12)
+# levels(DataForModel$class) <- class_labels_12
+
+DataForModel$class <- factor(DataForModel$class)
 
 ```
 
-```{r}
-# Create df with class number
-class_df <- as.data.frame(class_labels) %>%
-  mutate(class = row_number())
-```
 
 ```{r}
 # Saving the Dataset for Modeling as a csv file to avoid rerunning these lengthy steps
@@ -820,7 +846,6 @@ plot(LogiVarImportance)
 
 ### The *Out of sample* performance 
 
-
 ```{r, results=TRUE}
 logi_pred_Valid <- predict(logi_fit, validation_data)
 logi_CM <- confusionMatrix(logi_pred_Valid, validation_data$class)
@@ -1010,7 +1035,6 @@ logi_CM <- confusionMatrix(logi_pred_Valid, validation_data$class)
 
 
 
-
 # Predictions on the whole area
 
 We now take the whole image and predict on all pixels using the model that we estimated. 
@@ -1023,49 +1047,75 @@ While doing the prediction on the whole area (each pixel of the raster on the RO
 dir.create(paste0("Data/",MyDir,"/Predictions_with_R",StudyYear), showWarnings = FALSE)
 
 #  Export prediction with Random Forest model as TIFF
-rf_result <- predict(img,
-                  rf_fit,
-                  filename = paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromRF.tif"), 
+rf_result <- raster::predict(img,  rf_fit, na.rm =TRUE,
+                  filename = paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromRF.tif"),
                   overwrite = TRUE
-                  )  
+                  )
+
+# Create manually the classification names! 
+rat <- data.frame(ID =  c( 1 , 2 ,4 , 5,  6,  7,  8,  9, 10, 11, 12, 13),
+                  class = as.factor(class_labels))
+
+levels(rf_result) <- rat
+# plot(rf_result, main = "Predicted Classification")
 
 ```
-
-
-```{r,  results= TRUE }
-Table_result <- as.data.frame(rf_result) %>%
-  mutate(class =  as.factor(classification_fromRF))
-
-# We affect labels as defined by class_labels, to the variable class
-
-Table_result$class <- factor(Table_result$class, levels = names(class_labels), labels = class_labels)
-
-# Table_result <- left_join(Table_result, shp, join_by("classification_fromR"=="MC_ID")) %>%
-#   mutate(class = as.factor(MC_name)) %>%
-#  select(-c( "fid", "C_name", "MC_name", "C_ID", "SCP_UID", "geometry")) 
-```
-
-
-```{r,  results= TRUE }
-datasummary_skim(Table_result , type = "categorical",
-                 title = "Prediction on the whole region",
-                 notes = paste("N =", nrow(Table_result))) 
-```
-
 
 ```{r}
-# Graphic
-Table_result %>%
-  filter(!is.na(class)) %>%
-  mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
-  ggplot() + 
-  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
-  theme_minimal() + 
-  theme(plot.title = element_text(hjust = 0.5))+ 
-  labs(x = "", y = "", subtitle = paste ( "Random Forest model. N= ", nrow(Table_result)))  +
-  ggtitle("Land types predicted on the whole area ")
+# Extract predictions as a vector (ignoring NAs)
+pred_values <- values(rf_result) %>% na.omit()
+
+
+# Create a table of class proportions
+prop_table <- tibble(Class = factor(pred_values)) %>%
+  count(Class) %>%
+  mutate(Proportion = n / sum(n)) %>%
+  arrange(desc(Proportion))
+
+levels(prop_table$Class) <- class_labels
+
+# Print the table nicely
+prop_table %>%
+  knitr::kable(digits = 3, col.names = c("Class", "Count", "Proportion"))
+
 ```
 
+
+```{r,  results= TRUE }
+# Table_result <- as.data.frame(rf_result)
+# # %>%
+# #   mutate(class =  classification_fromRF)
+# 
+# 
+# # View(subset(Table_result, is.na(class)))
+# 
+# # We affect labels as defined by class_labels, to the variable class
+# 
+# Table_result$class <- factor(Table_result$class, levels = names(class_labels), labels = class_labels)
+# 
+# # Table_result <- left_join(Table_result, shp, join_by("classification_fromR"=="MC_ID")) %>%
+# #   mutate(class = as.factor(MC_name)) %>%
+# #  select(-c( "fid", "C_name", "MC_name", "C_ID", "SCP_UID", "geometry")) 
+```
+
+
+```{r,  results= TRUE }
+# datasummary_skim(Table_result , type = "categorical",
+#                  title = "Prediction on the whole region",
+#                  notes = paste("N =", nrow(Table_result))) 
+```
+```{r}
+ggplot(prop_table, aes(x = reorder(Class, Proportion), y = Proportion)) +
+  geom_bar(stat = "identity", fill = SIAP.color) +
+   geom_text(aes(label = scales::percent(Proportion, accuracy = 0.1)), 
+            vjust = 0.1, hjust = +1,  size = 3, color= "lightblue", fontface = "bold") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal() + 
+  coord_flip()+
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", subtitle = paste ( "Random Forest model. N= ", nrow(pred_values)))  +
+  ggtitle("Land types predicted on the whole area (RF model) ")
+```
 
 ## Predictions with a  *Multinomial Logistic* model (MNL)
 
@@ -1100,16 +1150,40 @@ datasummary_skim(Table_result_logi , type = "categorical",
 
 
 ```{r}
-# Graphic
-Table_result_logi %>%
-  filter(!is.na(class)) %>%
-  mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
-  ggplot() + 
-  geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+# Create a table of class proportions
+prop_table_logi <- tibble(Class = factor(Table_result_logi$class)) %>%
+  count(Class) %>%
+  mutate(Proportion = n / sum(n)) %>%
+  arrange(desc(Proportion))
+
+
+prop_table_logi %>%
+  filter(!is.na(Class))%>%
+  ggplot()+
+  aes(x = reorder(Class, Proportion), y = Proportion) +
+  geom_bar(stat = "identity", fill = SIAP.color) +
+   geom_text(aes(label = scales::percent(Proportion, accuracy = 0.1)), 
+            vjust = 0.1, hjust = +1,  size = 3, color= "lightblue", fontface = "bold") +
+  scale_y_continuous(labels = scales::percent_format()) +
   theme_minimal() + 
+  coord_flip()+
   theme(plot.title = element_text(hjust = 0.5))+ 
-  labs(x = "", y = "", subtitle = paste ( "Multinomial Logistic model. N= ", nrow(Table_result_logi)))  +
-  ggtitle("Land types predicted on the whole area ")
+  labs(x = "", y = "", subtitle = paste ( "Logistic model. N= ", nrow(Table_result_logi)))  +
+  ggtitle("Land types predicted on the whole area (logistic model) ")
+
+
+# Graphic
+# Table_result_logi %>%
+#   filter(!is.na(class)) %>%
+#   mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+#   ggplot() + 
+#   geom_text(aes(label = scales::percent(Proportion, accuracy = 0.1)), 
+#             vjust = -0.2, size = 4, fontface = "bold") +
+#   geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
+#   theme_minimal() + 
+#   theme(plot.title = element_text(hjust = 0.5))+ 
+#   labs(x = "", y = "", subtitle = paste ( "Multinomial Logistic model. N= ", nrow(Table_result_logi)))  +
+#   ggtitle("Land types predicted on the whole area ")
 ```
 ## Compairing predicitons by class
 
@@ -1132,7 +1206,6 @@ raster_df_RF <- as.data.frame(raster_data, xy = TRUE)
 class_colors <- c(
    '#4d926f',  # Dense Forest
    '#6dcf9c',  # Open Forest
-#   '#39f7c8',  # Forest Plantation
    '#3a5739',  # Mangroves
    '#d2c212',  # Agriculture
    '#e44ae7',  # Coconut Plantation
@@ -1143,9 +1216,7 @@ class_colors <- c(
     '#a06620',  # Bareland
     '#fcfefc',  # Cloud
     '#9bd9e1'  # Reef
-  
 )
-  
   
 
 
@@ -1163,7 +1234,7 @@ p_RF <- ggplot() +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Prediction (with RF) ",
-       subtitle = paste("Note: Out-of-sample kappa was ", as.character(round(rf_CM$overall[2], 4)) ), 
+       subtitle = paste("Out-of-sample accuracy:", as.character(100*round(rf_CM$overall[1], 4)),"%" ), 
        caption =  paste ( "N= ", nrow(raster_df_RF)),
        x = "Longitude",
        y = "Latitude")
@@ -1196,7 +1267,7 @@ p_logi <- ggplot() +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Prediction (MNL) ",
-       subtitle = paste("Note: Out-of-sample kappa was ", as.character(round(logi_CM$overall[2], 4)) ), 
+       subtitle = paste("Out-of-sample accuray:", as.character(100*round(logi_CM$overall[1], 4)),"%" ), 
        caption =  paste ( "N= ", nrow(raster_df_logi)),
        x = "Longitude",
        y = "Latitude")
@@ -1211,7 +1282,7 @@ p_logi
 # Combine the plots
 # removing the legend for one plot 
 p_RF <- p_RF + theme(legend.position = "none")
-p_logi <- p_logi + theme(legend.position = "none")
+p_logi <- p_logi + theme(legend.position = "bottom")
 
 
 RFvslogi <- (p_RF |  p_logi) 
@@ -1228,20 +1299,22 @@ combined_df <- raster_df_RF %>%
 # Create a new column indicating whether the predictions are the same or different
 combined_df <- combined_df %>%
   mutate(diff = ifelse(prediction_RF == prediction_logi, "No Change", "Change")) %>%
-  mutate(diff_class = ifelse(prediction_RF == prediction_logi, prediction_RF, "8"))
+  mutate(diff_class = ifelse(prediction_RF == prediction_logi, prediction_RF, "0"))
 
 # Define the  augmented color class labels with the category "Difference" 
-class_labels_N <- c(class_labels, "8" = "Difference")
+class_labels_N <- c("0" = "Difference", class_labels)
 
 # Define the augmented color palette accordingly 
-class_colors_N <- c(class_colors, "white")
+class_colors_N <- c("white", class_colors)
 
 # Convert raster values to a factor with labels
-combined_df$diff_class <- factor(combined_df$diff_class, levels = names(class_labels_N), labels = class_labels_N)
+combined_df$diff_class <- factor(combined_df$diff_class)
+levels(combined_df$diff_class) <- class_labels_N
+
 ```
 
 
- It can be imoortant to compute the differences and visualize where are the differences in prediction: 
+ It can be important to compute the differences and visualize where are the differences in prediction: 
  
 ```{r}
 nb_diff <- combined_df %>%
@@ -1307,6 +1380,11 @@ combined_df %>%
   ggtitle("Which categories have more differences?  ")
   
 
+```
+
+
+```{r EXIT, include=FALSE}
+knit_exit()
 ```
 
 
@@ -1443,8 +1521,4 @@ combined_plot <- (p_RF |  p_QGIS) / (p_diff + p_full)
 print(combined_plot)
 ```
 
-
-```{r EXIT, include=FALSE}
-knit_exit()
-```
 
