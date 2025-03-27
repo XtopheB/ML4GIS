@@ -43,7 +43,6 @@ As usual when working with specific data, We need both generic and specific pack
 # GIS packages
 library(raster) ## for reading "RASTER" files
 library(sf)     ## read shapefiles
-#library(rgdal)  ## for reading "shapefiles"
 library(sp)     ## for adjusting CRS in 
 library(terra)  ## see https://www.neonscience.org/resources/learning-hub/tutorials/image-raster-data-r
 
@@ -80,7 +79,7 @@ Firstly, we must define the year under study. We'll put that into parameters tha
 
 ```{r}
 MyDir <- "GIS-ROI-V2"
-StudyYear  <- 2020
+StudyYear  <- 2023
 ```
 
 > The year under study is  **`r StudyYear `**
@@ -1218,8 +1217,6 @@ class_colors <- c(
     '#9bd9e1'  # Reef
 )
   
-
-
 # Convert raster values to a factor with labels
 raster_df_RF$classification_fromRF <- factor(raster_df_RF$classification_fromRF, levels = names(class_labels), labels = class_labels)
 ```
@@ -1237,7 +1234,11 @@ p_RF <- ggplot() +
        subtitle = paste("Out-of-sample accuracy:", as.character(100*round(rf_CM$overall[1], 4)),"%" ), 
        caption =  paste ( "N= ", nrow(raster_df_RF)),
        x = "Longitude",
-       y = "Latitude")
+       y = "Latitude")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
 # Plot
 p_RF
 
@@ -1270,12 +1271,16 @@ p_logi <- ggplot() +
        subtitle = paste("Out-of-sample accuray:", as.character(100*round(logi_CM$overall[1], 4)),"%" ), 
        caption =  paste ( "N= ", nrow(raster_df_logi)),
        x = "Longitude",
-       y = "Latitude")
+       y = "Latitude")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
 # Plot
 p_logi
 
 ```
-
+## Comparing models 
 
 ```{r}
 
@@ -1294,21 +1299,58 @@ print(RFvslogi)
 # Merge the data frames on x and y coordinates
 combined_df <- raster_df_RF %>%
   inner_join(raster_df_logi, by = c("x", "y")) %>%
-  rename(prediction_RF = classification_fromRF, prediction_logi = classification_fromlogi)
+  rename(prediction_RF = classification_fromRF, 
+         prediction_logi = classification_fromlogi)
 
 # Create a new column indicating whether the predictions are the same or different
+# the NEW class is 0!!
 combined_df <- combined_df %>%
-  mutate(diff = ifelse(prediction_RF == prediction_logi, "No Change", "Change")) %>%
-  mutate(diff_class = ifelse(prediction_RF == prediction_logi, prediction_RF, "0"))
+  mutate(diff = ifelse(prediction_RF == prediction_logi, "Identical", "Change"))%>%
+  # mutate(diff_class = prediction_RF) %>%
+  mutate(diff_class = case_when(
+    prediction_RF != prediction_logi ~ "Difference",
+    TRUE ~ prediction_RF  # Keep original values if condition is not met
+))
+
+
 
 # Define the  augmented color class labels with the category "Difference" 
-class_labels_N <- c("0" = "Difference", class_labels)
-
+class_labels_N <-  c(
+"0" = "Difference", 
+"1" = "Dense_Forest",
+"2" = "Open_Forest",
+#"3" = "Forest_plantation",
+"4" = "Mangroves",
+"5" = "Agriculture",
+"6" = "Coconut_Plantation",
+"7" = "Grassland",
+"8" = "Built_up",
+"9" = "Water_body",
+"10" = "Shrubs",
+"11" = "Bareland",
+"12" = "Cloud",
+"13" = "Reef"
+)
+  
 # Define the augmented color palette accordingly 
-class_colors_N <- c("white", class_colors)
+class_colors_N  <- c(
+   "#FFA500",  # Difference
+   '#4d926f',  # Dense Forest
+   '#6dcf9c',  # Open Forest
+   '#3a5739',  # Mangroves
+   '#d2c212',  # Agriculture
+   '#e44ae7',  # Coconut Plantation
+   '#848099',  # Grassland
+   '#dc1010',  # Built-up Infrastructure
+   '#008aa2',  # Water Body
+    '#d7b084',  # Shrubs
+    '#a06620',  # Bareland
+    '#fcfefc',  # Cloud
+    '#9bd9e1'  # Reef
+)
 
 # Convert raster values to a factor with labels
-combined_df$diff_class <- factor(combined_df$diff_class)
+combined_df$diff_class <- factor(combined_df$diff_class, levels = names(class_labels_N), labels = class_labels_N)
 levels(combined_df$diff_class) <- class_labels_N
 
 ```
@@ -1333,12 +1375,17 @@ p_diff <- combined_df%>%
   ggplot()+
   aes(x = x, y = y) +
   geom_raster(aes(fill = diff_class)) +
- scale_fill_manual(values = "black", name = "Legend") +
+  scale_fill_manual(values = "orange", name = "Legend") +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Predictions differences",
        subtitle = paste("In total, ", pc_diff, "% of the pixels are different") ,
-       x = "Longitude", y = "Latitude")
+       x = "Longitude", y = "Latitude")+
+  theme(#legend.position = "none",
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
 
 p_diff
 
@@ -1350,12 +1397,17 @@ p_diff
 #Plot the map highlighting changes
 p_RF_diff <- ggplot(combined_df, aes(x = x, y = y)) +
   geom_raster(aes(fill = diff_class),  alpha = 0.5) +
- scale_fill_manual(values = class_colors_N, name = "Land Cover") +
+ scale_fill_manual(values = class_colors_N,
+                    name = "Land Cover") +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Predictions differences",
        subtitle = "RF predictions vs MNL predictions",
-       x = "Longitude", y = "Latitude")
+       x = "Longitude", y = "Latitude")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
 
 p_RF_diff
 
@@ -1364,6 +1416,16 @@ p_RF_diff
 ### Statistics on the differences 
 
 > How important are the differences between the 2 models? 
+ 
+ 
+```{r}
+nb_diff <- combined_df %>%
+  filter(diff=="Change") %>%
+  nrow()
+pc_diff <- round(100 * nb_diff / nrow(combined_df),2)
+```
+
+
 
 
 ```{r}
@@ -1371,7 +1433,7 @@ combined_df %>%
   filter(diff=="Change") %>%
   mutate(prediction_RF = fct_infreq(prediction_RF) %>% fct_rev()) %>%  # Reorder and reverse factor levels
   ggplot() + 
-  geom_bar(aes(y = prediction_RF), colour="white", fill = SIAP.color,) +
+  geom_bar(aes(y = prediction_RF), colour="white", fill = "orange") +
   theme_minimal() + 
   theme(plot.title = element_text(hjust = 0.5))+ 
   labs(x = "", y = "", 
@@ -1383,28 +1445,28 @@ combined_df %>%
 ```
 
 
-```{r EXIT, include=FALSE}
-knit_exit()
-```
-
-
 ### Comparing Random Forest model with Blanca's RF model
 
 ```{r}
-
+StudyYear <-2020
 # Read the TIFF file
-raster_RF_Blanca <- rast("Data/GISBlanca/R_RF_Classification_2020.tif")
+raster_RF_Blanca <- rast(paste0("Data/",MyDir,"/ROI",StudyYear,"/pred_landcover_",StudyYear,"_vROIs2.tif"))
 
 # Convert the raster to a data frame for ggplot2
 raster_df_Blanca <- as.data.frame(raster_RF_Blanca, xy = TRUE)
 
-# Convert raster values to a factor with labels
-raster_df_Blanca$R_RF_Classification_2020 <- factor(raster_df_Blanca$R_RF_Classification_2020, levels = names(class_labels), labels = class_labels)
+# Change prediction's name to be independent of the year!
+raster_df_Blanca <-raster_df_Blanca %>%
+  rename_with(~ "Pred", starts_with("pred_landcover"))
+ 
+
+# Convert raster values to a factor with labels 
+raster_df_Blanca$Pred <- factor(raster_df_Blanca$Pred, levels = names(class_labels), labels = class_labels)
 
 
 # Plot using ggplot2
 p_Blanca <- ggplot() +
-  geom_raster(data = raster_df_Blanca, aes(x = x, y = y, fill = R_RF_Classification_2020), alpha = 0.5 ) +
+  geom_raster(data = raster_df_Blanca, aes(x = x, y = y, fill = Pred), alpha = 0.5 ) +
   scale_fill_manual(values = class_colors, name = "Land Cover") +
   coord_fixed() +
   theme_minimal() +
@@ -1417,8 +1479,6 @@ p_Blanca
 ```
 
 ### Visualizing the differences
-
-
 
 ```{r}
 # Combine the plots
@@ -1433,30 +1493,88 @@ RFvsBlanca <- (p_RF |  p_Blanca)
 print(RFvsBlanca)
 ```
 
+### Statistics on the differences 
+
+> How important are the differences between the 2 models? 
+
+
 ```{r}
-# Computing the differences
+# Computing the differences. We continue with a combined data frame (already logit there)
 
 # Merge the data frames on x and y coordinates
-combined_df <- combined_df %>%
-  inner_join(raster_df_Blanca, by = c("x", "y")) %>%
-  rename(prediction_Blanca = R_RF_Classification_2020)
+combined_df_Q <- combined_df %>%
+  inner_join(raster_df_Blanca, by = c("x", "y")) 
+
+combined_df_Q <- combined_df_Q %>%
+  rename(prediction_Blanca = Pred)
 
 # Create a new column indicating whether the predictions are the same or different
-combined_df <- combined_df %>%
+# Affecting class = 0 to difference
+combined_df_Q <- combined_df_Q %>%
   mutate(diff_Q = ifelse(prediction_RF == prediction_Blanca, "No Change", "Change"))%>%
-   mutate(diff_class_Q = ifelse(prediction_RF ==prediction_Blanca, prediction_RF, "8"))
+   mutate(diff_class_Q = ifelse(prediction_RF == prediction_Blanca, prediction_RF, "0"))
 
 # Convert raster values to a factor with labels
-combined_df$diff_class_Q <- factor(combined_df$diff_class_Q, levels = names(class_labels_N), labels = class_labels_N)
+combined_df_Q$diff_class_Q <- factor(combined_df_Q$diff_class_Q, levels = names(class_labels_N), labels = class_labels_N)
 
 
 ```
+
+```{r}
+nb_diff_Q <- combined_df_Q %>%
+  filter(diff_Q=="Change") %>%
+  nrow()
+pc_diff_Q <- round(100 * nb_diff_Q / nrow(combined_df_Q),2)
+```
+
+
+```{r}
+combined_df_Q %>%
+  filter(diff_Q=="Change") %>%
+  mutate(prediction_RF = fct_infreq(prediction_RF) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+  ggplot() + 
+  geom_bar(aes(y = prediction_RF), colour="white", fill = "pink") +
+  labs( title = "Which categories have more differences?",
+        subtitle = paste("Comparing RF from R and Blanca: ",pc_diff_Q, "% differences (Year =", StudyYear, ")"),
+        caption = paste( "N= ", nrow(combined_df_Q %>% filter(diff=="Change")), "differences"),  
+        x = "", y = "")  +
+     theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+  
+  
+
+```
+
+
+```{r EXIT, include=FALSE}
+knit_exit()
+```
+
+
+```{r}
+#Map of differences!! 
+
+combined_df_Q %>%
+  filter(diff_Q=="Change") %>%
+  mutate(prediction_RF = fct_infreq(prediction_RF) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+  ggplot() + 
+  geom_bar(aes(y = prediction_RF), colour="white", fill = "pink") +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))+ 
+  labs(x = "", y = "", 
+       subtitle = paste ( "N= ", nrow(combined_df %>% filter(diff=="Change")), "differences (", pc_diff, "% )")
+       )  +
+  ggtitle("Which categories have more differences?  ")
+  
+
+```
+
 
 
 ```{r}
 
 #Plot the map highlighting changes
-p_full <- ggplot(combined_df, aes(x = x, y = y)) +
+p_full <- ggplot(combined_df_Q, aes(x = x, y = y)) +
   geom_raster(aes(fill = diff_class_Q ), alpha = 0.5 ) +
  scale_fill_manual(values = class_colors_N, name = "Land Cover") +
   coord_fixed() +
@@ -1500,6 +1618,32 @@ combined_df %>%
        )  +
   ggtitle("Which categories have more differences?  ")
   
+
+```
+
+
+```{r}
+
+## Atempt to do a Sankey polot but requires to have all flows Source -> Target + intensity of flows
+## This needs another file to be created (no time)
+
+library(networkD3)
+# From these flows we need to create a node data frame: it lists every entities involved in the flow
+Mynodes <- data.frame(
+  name=c(as.character(combined_df$prediction_RF), 
+  as.character(combined_df$prediction_logi)) %>% unique()
+)
+ 
+# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
+combined_df$IDsource <- match(combined_df$prediction_RF, nodes$name)-1 
+combined_df$IDtarget <- match(combined_df$prediction_logi, nodes$name)-1
+ 
+# Make the Network
+p <- sankeyNetwork(Links = combined_df, Nodes = Mynodes,
+              Source = "IDsource", Target = "IDtarget",
+              Value = "value", NodeID = "name", 
+              sinksRight=FALSE)
+p
 
 ```
 
