@@ -72,13 +72,20 @@ We will import and export files in different format, including GIS specific file
 There are many data sources freely available with environmental information at a very detailed level. These files are from huge data bases that cover large areas of the word. 
 
 ## a. Importing the stack of images
-From QGIS, we import the images that coresponds to the region of interestor **ROI**. The first element is to get the images frilm the satellite. 
+From QGIS, we import the images that corresponds to the region of interest or **ROI**. The first element is to get the images from the satellite. 
+
 
 ```{r}
 # import stacked raster (img) 
 # Needs  sf package 
 
-img <- brick("Data/GISBlanca/stack_raster123456788A91112_MayJune2020.tif")
+# IMPORTANT: Folders for data follows the directory structure defined during course in July
+# This .Rmd  file is in "TRAINING_VANUATU_JULY2024_COMPLETE_SENT/Working_in_R"
+
+# Importing TIFF images 
+img <- brick("../Data/Results/LC_2020/stacked/stack_raster123456788A91112_MayJune2020.tif")
+
+# Previously here: img <- brick("Data/GISBlanca/stack_raster123456788A91112_MayJune2020.tif")
 ```
  
 These are images taken with different bands and reflecting the nature of waves coming back from the satellite sensors. These will be our predictors, or explanatory variables, for our model, as the information is available for any point on the region.  
@@ -93,9 +100,17 @@ plot(img)
 Then, we have the "*ground truth*" or specific areas where we know the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
 
 ```{r}
-# Importing Shapefiles
-shp <- read_sf("Data/GISBlanca/reference_dataset_ROIs/")
+# IMPORTANT: Folders for data follows the directory structure defined during course in July
+# This .Rmd  file is in "TRAINING_VANUATU_JULY2024_COMPLETE_SENT/Working_in_R"
 
+# Importing Shapefiles
+shp <- read_sf("../Data/Results/LC_2020/training_input/Training_data_SHP.shp")
+
+# Previously here shp <- read_sf("Data/GISBlanca/reference_dataset_ROIs/")
+```
+
+
+```{r}
 # extract classes and band information and put in a dataframe for later
 names(img) <- c("b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b8A", "b9", "b11", "b12")
 ```
@@ -802,13 +817,16 @@ boxplot(perf$values[c("RF~Kappa", "Logit~Kappa",
 We now take the whole image and predict on all pixels using the model that we estimated. 
 
 ## Predictions with *Random Forest*
-While doing the prediction on thje whole area (each pixel of the raster on the ROI), we  export the results to a *.tif* file that will be used in QGIS. 
+While doing the prediction on the whole area (each pixel of the raster on the ROI), we  export the results to a *.tif* file that will be used in QGIS. 
 
 ```{r}
+# We will store the prediction in a temp folder: 
+dir.create("Predictions_with_R", showWarnings = FALSE)
+
 # prediction with Random Forest model
 rf_result <- predict(img,
                   rf_fit,
-                  filename = "Data/GISBlanca/classification_fromRF.tif", # export to be used in QGIS
+                  filename = "Predictions_with_R/classification_fromRF.tif", # export to be used in QGIS
                   overwrite = TRUE
                   )  
 
@@ -851,11 +869,10 @@ ggplot() +
 ## Predictions with a  *Multinomial Logistic* model (MNL)
 
 ```{r}
-# prediction with Multinomial Logistic 
-
+# Prediction with Multinomial Logistic
 logi_result <- predict(img,
                   logi_fit,
-                  filename = "Data/GISBlanca/classification_fromlogi.tif",  # Export to QGIS
+                  filename = "Predictions_with_R/classification_fromlogi.tif",  # Export to QGIS
                   overwrite = TRUE
                   )  
 
@@ -901,7 +918,7 @@ ggplot() +
 library(terra)
 
 # Read the TIFF file from the Random forest model
-raster_data <- rast("Data/GISBlanca/classification_fromRF.tif")
+raster_data <- rast("Predictions_with_R/classification_fromRF.tif")
 
 # Convert the raster to a data frame for ggplot2
 raster_df_RF <- as.data.frame(raster_data, xy = TRUE)
@@ -947,7 +964,7 @@ p_RF
 
 ```{r}
 # Read the TIFF file from the Multinomial logistic  model
-raster_data_logi<- rast("Data/GISBlanca/classification_fromlogi.tif")
+raster_data_logi<- rast("Predictions_with_R/classification_fromlogi.tif")
 
 # Convert the raster to a data frame for ggplot2
 raster_df_logi <- as.data.frame(raster_data_logi, xy = TRUE)
@@ -1079,7 +1096,13 @@ combined_df %>%
 
 ```
 
-### Comparing Random Forest model with Blanca's
+
+
+```{r}
+knit_exit()
+```
+
+### Comparing Random Forest model with Blanca's RF model
 
 ```{r}
 
