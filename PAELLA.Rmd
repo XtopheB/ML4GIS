@@ -13,6 +13,7 @@ output:
     theme: lumen
   pdf_document: default
   word_document: default
+always_allow_html: true
 ---
 
 ```{r setup, include=FALSE}
@@ -79,7 +80,7 @@ Firstly, we must define the year under study. We'll put that into parameters tha
 
 ```{r}
 MyDir <- "GIS-ROI-V2"
-StudyYear  <- 2020
+StudyYear  <- 2023
 ```
 
 > The year under study is  **`r StudyYear `**
@@ -1414,7 +1415,6 @@ flow_data <- combined_df %>%
   filter(prediction_RF !="Water_body" )%>%
   count(prediction_RF, prediction_smote, name = "Frequency")
 
-
 ```
 
 
@@ -1428,10 +1428,11 @@ p_S <- ggplot(flow_data,
   geom_alluvium(aes(fill = prediction_RF), width = 0, color= "grey") +
   geom_stratum(width = 1/20, aes(fill = prediction_RF ), color = "white" ) +
   geom_text(stat = "stratum", aes(label = after_stat(stratum)), 
-            size = 3, color = "black",  min.y = 100000) +
+            size = 3, color = "black",  min.y = 100000) +  # min.y to remove small categories label
   scale_x_discrete(limits = c("RF Model", "SMOTE Model"), expand = c(0.15, 0.05)) +
   scale_fill_manual(values = mypalette)  + 
-  ggtitle("Comparison of RF and SMOTE Models Predictions") +
+  labs(title = "Comparison of RF and SMOTE Models Predictions",
+       subtitle = paste("Year =", StudyYear)) +
   theme_minimal() +
   theme(text = element_text(size = 8),
         axis.text.y = element_blank())
@@ -1444,8 +1445,12 @@ p_S
 
 ```{r}
 # Read the TIFF file
-raster_RF_Blanca <- rast(paste0("Data/",MyDir,"/ROI",StudyYear,"/pred_landcover_",StudyYear,"_vROIs2.tif"))
+BlancaFile <- ifelse(StudyYear== 2020,
+                          paste0("Data/",MyDir,"/ROI",StudyYear,"/pred_landcover_",StudyYear,"_vROIs2.tif"), 
+                           paste0("Data/",MyDir,"/ROI",StudyYear,"/pred_landcover_2023_vROIs1.tif")                                                  )
 
+
+raster_RF_Blanca <- rast(BlancaFile)
 # Convert the raster to a data frame for ggplot2
 raster_df_Blanca <- as.data.frame(raster_RF_Blanca, xy = TRUE)
 
@@ -1456,8 +1461,10 @@ raster_df_Blanca <-raster_df_Blanca %>%
 
 # Convert raster values to a factor with labels 
 raster_df_Blanca$Pred <- factor(raster_df_Blanca$Pred, levels = names(class_labels), labels = class_labels)
+```
 
 
+```{r}
 # Plot using ggplot2
 p_Blanca <- ggplot() +
   geom_raster(data = raster_df_Blanca, aes(x = x, y = y, fill = Pred), alpha = 0.5 ) +
@@ -1465,8 +1472,13 @@ p_Blanca <- ggplot() +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Prediction (from Blanca) ",
+       subtitle = paste("Year =", StudyYear),
        x = "Longitude",
-       y = "Latitude")
+       y = "Latitude")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
 
 p_Blanca
 
@@ -1540,6 +1552,40 @@ combined_df_Q %>%
 ```
 
 
+```{r}
+# Summarize the data to count occurrences of each prediction pair
+# We remove Water_body to have a better view
+
+flow_data_Q <- combined_df_Q %>%
+  filter(prediction_RF !="Water_body" )%>%
+  count(prediction_RF, prediction_Blanca, name = "Frequency")
+
+```
+
+
+```{r}
+library(ggalluvial)
+
+mypalette <- class_colors[-c(8)] # Removing Water_body color!!
+
+p_S <- ggplot(flow_data_Q,
+       aes(axis1 = prediction_RF, axis2 = prediction_Blanca, y = Frequency)) +
+  geom_alluvium(aes(fill = prediction_RF), width = 0, color= "grey") +
+  geom_stratum(width = 1/20, aes(fill = prediction_RF ), color = "white" ) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), 
+            size = 3, color = "black",  min.y = 100000) +  # min.y to remove small categories label
+  scale_x_discrete(limits = c("RF Model", "Blanc's Model"), expand = c(0.15, 0.05)) +
+  scale_fill_manual(values = mypalette)  + 
+  labs(title = "Comparison of RF and Blanca's Models Predictions",
+       subtitle = paste(" Difference between models:",pc_diff_Q,"%, Year =", StudyYear)) +
+  theme_minimal() +
+  theme(text = element_text(size = 8),
+        axis.text.y = element_blank())
+
+p_S
+
+
+```
 ```{r EXIT, include=FALSE}
 knit_exit()
 ```
