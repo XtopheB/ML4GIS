@@ -854,7 +854,7 @@ K5_CV_seed_up <- trainControl(method = "cv",
                            seeds = rcvSeeds,
                            allowParallel = TRUE)
 
-
+# Training the up model 
 rf_fit_up <- train(formula,
                 data = train_data,
                 method = "rf",
@@ -863,9 +863,7 @@ rf_fit_up <- train(formula,
                 trControl = K5_CV_seed_up)
 
 rf_fit_up
-
 ```
-
 
 ```{r}
 K5_CV_seed_down <- trainControl(method = "cv", 
@@ -887,7 +885,6 @@ rf_fit_down <- train(formula,
 rf_fit_down
 
 ```
-
 
 ## SMOTE (Synthetic Minority Over-sampling Technique)
 
@@ -920,7 +917,6 @@ rf_fit_smote <- train(formula,
 rf_fit_smote
 ```
  
- 
 ##  Comparing all models
 
 All these models use different parameters and have specific advantages and drawbacks. We may still want to compare their **predictive performances** on the various measures of fit. For that we will plot the distribution of the values of these indicators on all the validation samples, for each model.
@@ -929,7 +925,7 @@ All these models use different parameters and have specific advantages and drawb
 
 It is important to compare models base on one of the "metrics" available. In our case, we will focus on "Accuracy" or "Kappa" as these are the most relevant. But one may as well be focusing on one particular class specificity if there is one class that one wish to predict well.  
 
-```{r modelsperf}
+```{r }
 models <- list( RF =rf_fit, 
                 RF_up = rf_fit_up,
                 RF_down = rf_fit_down, 
@@ -941,7 +937,7 @@ colvec <- c('#fbb4ae','#ccebc5','#decbe4','#fed9a6','#ffffcc')
 ```
 
 
-```{r modelsperf}
+```{r }
 
 # Comparing models based on Accuracy
 boxplot(perf$values[c("RF~Accuracy",  
@@ -953,7 +949,7 @@ boxplot(perf$values[c("RF~Accuracy",
 ```
 
 
-```{r modelsperf}
+```{r }
 # Comparing models based on Kappa
 boxplot(perf$values[c("RF~Kappa", 
                       "RF_up~Kappa", "RF_down~Kappa", "RF_Smote~Kappa")],
@@ -1002,10 +998,6 @@ smote_cm_df %>%
   theme (legend.position ="none")
 ```
 
-
-
-
-
 # Predictions on the whole area
 
 We now take the whole image and predict on all pixels using the model that we estimated. 
@@ -1035,7 +1027,6 @@ levels(rf_result) <- rat
 ```{r}
 # Extract predictions as a vector (ignoring NAs)
 pred_values <- values(rf_result) %>% na.omit()
-
 
 # Create a table of class proportions
 prop_table <- tibble(Class = factor(pred_values)) %>%
@@ -1075,6 +1066,8 @@ prop_table %>%
 #                  title = "Prediction on the whole region",
 #                  notes = paste("N =", nrow(Table_result))) 
 ```
+
+
 ```{r}
 ggplot(prop_table, aes(x = reorder(Class, Proportion), y = Proportion)) +
   geom_bar(stat = "identity", fill = SIAP.color) +
@@ -1088,13 +1081,13 @@ ggplot(prop_table, aes(x = reorder(Class, Proportion), y = Proportion)) +
   ggtitle("Land types predicted on the whole area (RF model) ")
 ```
 
-## Predictions with a  *Multinomial Logistic* model (MNL)
+## Predictions with the RF SMOTE model
 
 ```{r}
-# Export Prediction with Multinomial Logistic as TIFF
-logi_result <- predict(img,
-                  logi_fit,
-                  filename = paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromlogi.tif"),  
+# Export Prediction with SMOTE as TIFF
+smote_result <- predict(img,
+                  smote_fit,
+                  filename = paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromsmote.tif"),  
                   overwrite = TRUE
                   )  
 
@@ -1102,33 +1095,33 @@ logi_result <- predict(img,
 
 
 ```{r,  results= TRUE }
-Table_result_logi <- as.data.frame(logi_result) %>%
-  mutate(class =  as.factor(classification_fromlogi))
+Table_result_smote <- as.data.frame(smote_result) %>%
+  mutate(class =  as.factor(classification_fromsmote))
 
 # We affect labels as defined by class_labels, to the variable class
 
-Table_result_logi$class <- factor(Table_result_logi$class, levels = names(class_labels), labels = class_labels)
+Table_result_smote$class <- factor(Table_result_smote$class, levels = names(class_labels), labels = class_labels)
 
 
 ```
 
 
 ```{r,  results= TRUE }
-datasummary_skim(Table_result_logi , type = "categorical",
+datasummary_skim(Table_result_smote , type = "categorical",
                  title = "Prediction on the whole region",
-                 notes = paste("N =", nrow(Table_result_logi))) 
+                 notes = paste("N =", nrow(Table_result_smote))) 
 ```
 
 
 ```{r}
 # Create a table of class proportions
-prop_table_logi <- tibble(Class = factor(Table_result_logi$class)) %>%
+prop_table_smote <- tibble(Class = factor(Table_result_smote$class)) %>%
   count(Class) %>%
   mutate(Proportion = n / sum(n)) %>%
   arrange(desc(Proportion))
 
 
-prop_table_logi %>%
+prop_table_smote %>%
   filter(!is.na(Class))%>%
   ggplot()+
   aes(x = reorder(Class, Proportion), y = Proportion) +
@@ -1139,12 +1132,12 @@ prop_table_logi %>%
   theme_minimal() + 
   coord_flip()+
   theme(plot.title = element_text(hjust = 0.5))+ 
-  labs(x = "", y = "", subtitle = paste ( "Logistic model. N= ", nrow(Table_result_logi)))  +
-  ggtitle("Land types predicted on the whole area (logistic model) ")
+  labs(x = "", y = "", subtitle = paste ( "RF SMOTE. N= ", nrow(Table_result_smote)))  +
+  ggtitle("Land types predicted on the whole area (SMOTE) ")
 
 
 # Graphic
-# Table_result_logi %>%
+# Table_result_smote %>%
 #   filter(!is.na(class)) %>%
 #   mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
 #   ggplot() + 
@@ -1153,7 +1146,7 @@ prop_table_logi %>%
 #   geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
 #   theme_minimal() + 
 #   theme(plot.title = element_text(hjust = 0.5))+ 
-#   labs(x = "", y = "", subtitle = paste ( "Multinomial Logistic model. N= ", nrow(Table_result_logi)))  +
+#   labs(x = "", y = "", subtitle = paste ( "Multinomial smotestic model. N= ", nrow(Table_result_smote)))  +
 #   ggtitle("Land types predicted on the whole area ")
 ```
 ## Compairing predicitons by class
@@ -1216,32 +1209,32 @@ p_RF
 
 ```
 
-### Predictions of the MNL model
+### Predictions of the SMOTE model
 
 
 ```{r}
-# Read the TIFF file from the Multinomial logistic  model
-raster_data_logi<- rast(paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromlogi.tif"))
+# Read the TIFF file from the RF SMOTE  model
+raster_data_smote<- rast(paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromsmote.tif"))
 
 # Convert the raster to a data frame for ggplot2
-raster_df_logi <- as.data.frame(raster_data_logi, xy = TRUE)
+raster_df_smote <- as.data.frame(raster_data_smote, xy = TRUE)
 
 # Convert raster values to a factor with labels
-raster_df_logi$classification_fromlogi <- factor(raster_df_logi$classification_fromlogi, levels = names(class_labels), labels = class_labels)
+raster_df_smote$classification_fromsmote <- factor(raster_df_smote$classification_fromsmote, levels = names(class_labels), labels = class_labels)
 ```
 
 
 
 ```{r}
 # Plot using ggplot2
-p_logi <- ggplot() +
-  geom_raster(data = raster_df_logi, aes(x = x, y = y, fill = classification_fromlogi), alpha = 0.5 ) +
+p_smote <- ggplot() +
+  geom_raster(data = raster_df_smote, aes(x = x, y = y, fill = classification_fromsmote), alpha = 0.5 ) +
   scale_fill_manual(values = class_colors, name = "Land Cover") +
   coord_fixed() +
   theme_minimal() +
   labs(title = "Prediction (MNL) ",
-       subtitle = paste("Out-of-sample accuray:", as.character(100*round(logi_CM$overall[1], 4)),"%" ), 
-       caption =  paste ( "N= ", nrow(raster_df_logi)),
+       subtitle = paste("Out-of-sample accuray:", as.character(100*round(smote_CM$overall[1], 4)),"%" ), 
+       caption =  paste ( "N= ", nrow(raster_df_smote)),
        x = "Longitude",
        y = "Latitude")+
   theme(axis.text.x=element_blank(),
@@ -1249,7 +1242,7 @@ p_logi <- ggplot() +
         axis.text.y=element_blank(),
         axis.ticks.y=element_blank())
 # Plot
-p_logi
+p_smote
 
 ```
 ## Comparing models 
@@ -1259,28 +1252,28 @@ p_logi
 # Combine the plots
 # removing the legend for one plot 
 p_RF <- p_RF + theme(legend.position = "none")
-p_logi <- p_logi + theme(legend.position = "bottom")
+p_smote <- p_smote + theme(legend.position = "bottom")
 
 
-RFvslogi <- (p_RF |  p_logi) 
+RFvssmote <- (p_RF |  p_smote) 
 
 # Display the combined plot
-print(RFvslogi)
+print(RFvssmote)
 ```
 ```{r}
 # Merge the data frames on x and y coordinates
 combined_df <- raster_df_RF %>%
-  inner_join(raster_df_logi, by = c("x", "y")) %>%
+  inner_join(raster_df_smote, by = c("x", "y")) %>%
   rename(prediction_RF = classification_fromRF, 
-         prediction_logi = classification_fromlogi)
+         prediction_smote = classification_fromsmote)
 
 # Create a new column indicating whether the predictions are the same or different
 # the NEW class is 0!!
 combined_df <- combined_df %>%
-  mutate(diff = ifelse(prediction_RF == prediction_logi, "Identical", "Change"))%>%
+  mutate(diff = ifelse(prediction_RF == prediction_smote, "Identical", "Change"))%>%
   # mutate(diff_class = prediction_RF) %>%
   mutate(diff_class = case_when(
-    prediction_RF != prediction_logi ~ "Difference",
+    prediction_RF != prediction_smote ~ "Difference",
     TRUE ~ prediction_RF  # Keep original values if condition is not met
 ))
 
@@ -1471,7 +1464,7 @@ print(RFvsBlanca)
 
 
 ```{r}
-# Computing the differences. We continue with a combined data frame (already logit there)
+# Computing the differences. We continue with a combined data frame (already smotet there)
 
 # Merge the data frames on x and y coordinates
 combined_df_Q <- combined_df %>%
@@ -1596,19 +1589,19 @@ combined_df %>%
 
 ```{r}
 
-## Atempt to do a Sankey polot but requires to have all flows Source -> Target + intensity of flows
+## Attempt to do a Sankey polot but requires to have all flows Source -> Target + intensity of flows
 ## This needs another file to be created (no time)
 
 library(networkD3)
 # From these flows we need to create a node data frame: it lists every entities involved in the flow
 Mynodes <- data.frame(
   name=c(as.character(combined_df$prediction_RF), 
-  as.character(combined_df$prediction_logi)) %>% unique()
+  as.character(combined_df$prediction_smote)) %>% unique()
 )
  
 # With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
 combined_df$IDsource <- match(combined_df$prediction_RF, nodes$name)-1 
-combined_df$IDtarget <- match(combined_df$prediction_logi, nodes$name)-1
+combined_df$IDtarget <- match(combined_df$prediction_smote, nodes$name)-1
  
 # Make the Network
 p <- sankeyNetwork(Links = combined_df, Nodes = Mynodes,
