@@ -316,8 +316,7 @@ validation_data  <- DataForModel[-trainIndex,]
 
 We have `r nrow(train_data)` observations in the training data set (80\%) and `r nrow(validation_data)` observations in the validation data set (20\%). It is important to have a look at our train data set and check if it has the same characteristics, in particular for the categories distribution.  
 
-```{r,  results= TRUE }
-
+```{r include=FALSE, results=TRUE}
 
 as.data.frame(train_data$class) %>% datasummary_skim( type = "categorical",
                  title = "Train data set",
@@ -638,13 +637,20 @@ We now know that the optimal number of trees seems to be `ntree` = **`r ntree_be
 
 ### Final model selection
 
-Based on what we have discovered, it seems that selecting a Random Forest model with **`ntree` = `r ntree_best`**, **`mtry` = `r mtry_best`**  should be a quite good option. Since we have quite imbalance classes, we also will rely more on the value of the  *kappa* parameter that in the pure accuracy in the remaining part of the analysis 
+Based on what we have discovered, it seems that selecting a Random Forest model with **`ntree` = `r ntree_best`**, **`mtry` = `r mtry_best`**  should be a quite good option. Since we have quite imbalance classes, we also will rely more on the value of the  *kappa* parameter that in the pure accuracy in the remaining part of the analysis.
+
+```{r}
+# Uses the optimal mtry from the previous model
+grid <- expand.grid(.mtry=  mtry_best) # <- this is the way to impose mtry*
+
+# Solution automatically picked
+# ntree = ntree_best
+ntree = 250  ## <- My Choice
+```
+
+> One can still decide manually to select the parameters, and here **I** have decided to select "*only*"  **`r ntree` trees** for the analysis.
 
 ```{r, cache = TRUE}
-# Uses the optimal mtry from the previous model
-grid <- expand.grid(.mtry=  mtry_best) # <- this is the way to impose mtry
-ntree = ntree_best
-
 #Train a model  with fixed mtry and ntree parameters, other parameters are as previously defined 
 rf_final_fit <- train(formula,
                 data = train_data,
@@ -751,13 +757,37 @@ cm_df %>%
 Our validation sample has **`r nrow(validation_data)`** observations. Let's see how the prediction goes on the different land classes.
 
 
-```{r, results= TRUE}
+```{r include=FALSE, results=TRUE}
 pred_valid <-as.data.frame(rf_pred_Valid) 
 
 datasummary_skim(pred_valid , type = "categorical",
                  title = "Prediction",
                  notes = paste("N =", nrow(pred_valid))) 
 ```
+
+
+```{r}
+pred_classes_RF <- pred_valid %>%
+  mutate(class = as.factor(rf_pred_Valid)) %>%
+  group_by(class) %>%
+  count()
+
+```
+
+
+```{r}
+ggplot(pred_classes_RF, aes(x = reorder(class, n), y = n)) +
+  geom_bar(stat = "identity", fill = SIAP.color) +
+   geom_text(aes(label = n), 
+            vjust = 0.1, hjust = +1.5,  size = 3, color= "lightblue", fontface = "bold") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal() + 
+  coord_flip()+
+  theme(plot.title = element_text(hjust = 1))+ 
+  labs(x = "", y = "", subtitle = paste ( "Random Forest model. N= ", nrow(pred_valid)))  +
+  ggtitle("Land types predicted on the validation sample (RF model) ")
+```
+
 
 ### Visualizing the model prediction per class  
 
@@ -1000,10 +1030,10 @@ smote_cm_df %>%
 
 # Predictions on the whole area
 
-We now take the whole image and predict on all pixels using the model that we estimated. 
+We now take the whole image and predict on **all observations = all pixels** using the model that we estimated. 
 
 ## Predictions with *Random Forest*
-While doing the prediction on the whole area (each pixel of the raster on the ROI), we  export the results to a *.tif* file that will be used in QGIS. 
+While doing the prediction on the whole area (each pixel of the raster on the ROI), weexport the results to a *.tif* file that will be used in QGIS. 
 
 ```{r}
 # We will store the prediction in a specific folder: 
@@ -1043,29 +1073,6 @@ prop_table %>%
 ```
 
 
-```{r,  results= TRUE }
-# Table_result <- as.data.frame(rf_result)
-# # %>%
-# #   mutate(class =  classification_fromRF)
-# 
-# 
-# # View(subset(Table_result, is.na(class)))
-# 
-# # We affect labels as defined by class_labels, to the variable class
-# 
-# Table_result$class <- factor(Table_result$class, levels = names(class_labels), labels = class_labels)
-# 
-# # Table_result <- left_join(Table_result, shp, join_by("classification_fromR"=="MC_ID")) %>%
-# #   mutate(class = as.factor(MC_name)) %>%
-# #  select(-c( "fid", "C_name", "MC_name", "C_ID", "SCP_UID", "geometry")) 
-```
-
-
-```{r,  results= TRUE }
-# datasummary_skim(Table_result , type = "categorical",
-#                  title = "Prediction on the whole region",
-#                  notes = paste("N =", nrow(Table_result))) 
-```
 
 
 ```{r}
@@ -1077,7 +1084,7 @@ ggplot(prop_table, aes(x = reorder(Class, Proportion), y = Proportion)) +
   theme_minimal() + 
   coord_flip()+
   theme(plot.title = element_text(hjust = 0.5))+ 
-  labs(x = "", y = "", subtitle = paste ( "Random Forest model. N= ", nrow(pred_values)))  +
+  labs(x = "", y = "", subtitle = paste ( "Random Forest model. N= ", length(pred_values)))  +
   ggtitle("Land types predicted on the whole area (RF model) ")
 ```
 
@@ -1086,7 +1093,7 @@ ggplot(prop_table, aes(x = reorder(Class, Proportion), y = Proportion)) +
 ```{r}
 # Export Prediction with SMOTE as TIFF
 smote_result <- predict(img,
-                  smote_fit,
+                  rf_fit_smote,
                   filename = paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromsmote.tif"),  
                   overwrite = TRUE
                   )  
@@ -1105,12 +1112,6 @@ Table_result_smote$class <- factor(Table_result_smote$class, levels = names(clas
 
 ```
 
-
-```{r,  results= TRUE }
-datasummary_skim(Table_result_smote , type = "categorical",
-                 title = "Prediction on the whole region",
-                 notes = paste("N =", nrow(Table_result_smote))) 
-```
 
 
 ```{r}
@@ -1136,25 +1137,15 @@ prop_table_smote %>%
   ggtitle("Land types predicted on the whole area (SMOTE) ")
 
 
-# Graphic
-# Table_result_smote %>%
-#   filter(!is.na(class)) %>%
-#   mutate(class = fct_infreq(class) %>% fct_rev()) %>%  # Reorder and reverse factor levels
-#   ggplot() + 
-#   geom_text(aes(label = scales::percent(Proportion, accuracy = 0.1)), 
-#             vjust = -0.2, size = 4, fontface = "bold") +
-#   geom_bar(aes(y = class), colour="white", fill = SIAP.color) +
-#   theme_minimal() + 
-#   theme(plot.title = element_text(hjust = 0.5))+ 
-#   labs(x = "", y = "", subtitle = paste ( "Multinomial smotestic model. N= ", nrow(Table_result_smote)))  +
-#   ggtitle("Land types predicted on the whole area ")
 ```
 ## Compairing predicitons by class
 
-> **TODO**
 
 
-## Visualizing the predictions
+
+
+
+## Visualizing the predictions on a MAP
 
 
 ```{r}
@@ -1232,7 +1223,7 @@ p_smote <- ggplot() +
   scale_fill_manual(values = class_colors, name = "Land Cover") +
   coord_fixed() +
   theme_minimal() +
-  labs(title = "Prediction (MNL) ",
+  labs(title = "Prediction (SMOTE) ",
        subtitle = paste("Out-of-sample accuray:", as.character(100*round(smote_CM$overall[1], 4)),"%" ), 
        caption =  paste ( "N= ", nrow(raster_df_smote)),
        x = "Longitude",
@@ -1251,8 +1242,8 @@ p_smote
 
 # Combine the plots
 # removing the legend for one plot 
-p_RF <- p_RF + theme(legend.position = "none")
-p_smote <- p_smote + theme(legend.position = "bottom")
+p_RF <- p_RF + theme(legend.position = "bottom")
+p_smote <- p_smote + theme(legend.position = "none")
 
 
 RFvssmote <- (p_RF |  p_smote) 
@@ -1260,6 +1251,9 @@ RFvssmote <- (p_RF |  p_smote)
 # Display the combined plot
 print(RFvssmote)
 ```
+
+
+
 ```{r}
 # Merge the data frames on x and y coordinates
 combined_df <- raster_df_RF %>%
@@ -1343,10 +1337,10 @@ p_diff <- combined_df%>%
   scale_fill_manual(values = "orange", name = "Legend") +
   coord_fixed() +
   theme_minimal() +
-  labs(title = "Predictions differences",
+  labs(title = "Predictions differences (Representing pixels with a difference)",
        subtitle = paste("In total, ", pc_diff, "% of the pixels are different") ,
        x = "Longitude", y = "Latitude")+
-  theme(#legend.position = "none",
+  theme(legend.position = "none",
         axis.text.x=element_blank(),
         axis.ticks.x=element_blank(), 
         axis.text.y=element_blank(),
@@ -1374,7 +1368,7 @@ p_RF_diff <- ggplot(combined_df, aes(x = x, y = y)) +
         axis.text.y=element_blank(),
         axis.ticks.y=element_blank())
 
-p_RF_diff
+# p_RF_diff
 
 ```
 
@@ -1389,8 +1383,6 @@ nb_diff <- combined_df %>%
   nrow()
 pc_diff <- round(100 * nb_diff / nrow(combined_df),2)
 ```
-
-
 
 
 ```{r}
@@ -1409,11 +1401,48 @@ combined_df %>%
 
 ```
 
+### Alluvial (*Sankey*) graphic to visualize the differences in predictions 
+
+In this graphic, the RF model is represented vertically by a bar on the left. Each prediction is represented as a color in a stacked bar. The SMOTE model is on the right. The *ribbons* in between represent the flows between categories. The width of the *ribbons* corresponds to the number of predictions differing from one class to another.
+
+
+```{r}
+# Summarize the data to count occurrences of each prediction pair
+# We remove Water_body to have a better view
+
+flow_data <- combined_df %>%
+  filter(prediction_RF !="Water_body" )%>%
+  count(prediction_RF, prediction_smote, name = "Frequency")
+
+
+```
+
+
+```{r}
+library(ggalluvial)
+
+mypalette <- class_colors[-c(8)] # Removing Water_body color!!
+
+p_S <- ggplot(flow_data,
+       aes(axis1 = prediction_RF, axis2 = prediction_smote, y = Frequency)) +
+  geom_alluvium(aes(fill = prediction_RF), width = 0, color= "grey") +
+  geom_stratum(width = 1/20, aes(fill = prediction_RF ), color = "white" ) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), 
+            size = 3, color = "black",  min.y = 100000) +
+  scale_x_discrete(limits = c("RF Model", "SMOTE Model"), expand = c(0.15, 0.05)) +
+  scale_fill_manual(values = mypalette)  + 
+  ggtitle("Comparison of RF and SMOTE Models Predictions") +
+  theme_minimal() +
+  theme(text = element_text(size = 8),
+        axis.text.y = element_blank())
+
+p_S
+
+```
 
 ### Comparing Random Forest model with Blanca's RF model
 
 ```{r}
-StudyYear <-2020
 # Read the TIFF file
 raster_RF_Blanca <- rast(paste0("Data/",MyDir,"/ROI",StudyYear,"/pred_landcover_",StudyYear,"_vROIs2.tif"))
 
@@ -1588,30 +1617,46 @@ combined_df %>%
 
 
 ```{r}
-
 ## Attempt to do a Sankey polot but requires to have all flows Source -> Target + intensity of flows
-## This needs another file to be created (no time)
+## Works but not nice!!!
+
 
 library(networkD3)
-# From these flows we need to create a node data frame: it lists every entities involved in the flow
-Mynodes <- data.frame(
-  name=c(as.character(combined_df$prediction_RF), 
-  as.character(combined_df$prediction_smote)) %>% unique()
-)
- 
-# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
-combined_df$IDsource <- match(combined_df$prediction_RF, nodes$name)-1 
-combined_df$IDtarget <- match(combined_df$prediction_smote, nodes$name)-1
- 
-# Make the Network
-p <- sankeyNetwork(Links = combined_df, Nodes = Mynodes,
-              Source = "IDsource", Target = "IDtarget",
-              Value = "value", NodeID = "name", 
-              sinksRight=FALSE)
-p
+# Summarize the data to count occurrences of each prediction pair
+flow_data <- combined_df %>%
+  group_by(prediction_RF, prediction_smote) %>%
+  summarise(Frequency = n()) %>%
+  ungroup()
+
+flow_data <- combined_df %>%
+  count(prediction_RF, prediction_smote, name = "Frequency")
+
+
+# Create a unique list of categories from both models
+categories <- unique(c(flow_data$prediction_RF, flow_data$prediction_smote))
+
+# Create a data frame for nodes
+nodes <- data.frame(name = categories)
+
+# Create a data frame for links
+links <- flow_data %>%
+  mutate(
+    Source = match(prediction_RF, nodes$name) - 1,
+    Target = match(prediction_smote, nodes$name) - 1
+  ) %>%
+  select(Source, Target, Frequency)
+
+# Create the Sankey diagram
+sankey <- sankeyNetwork(Links = links, Nodes = nodes,
+                        Source = "Source", Target = "Target",
+                        Value = "Frequency", NodeID = "name",
+                        units = "Occurrences", fontSize = 12, nodeWidth = 30)
+
+# Plot the Sankey diagram
+print(sankey)
+
 
 ```
-
 
 
 
