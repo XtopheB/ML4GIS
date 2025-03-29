@@ -79,7 +79,7 @@ Firstly, we must define the year under study. We'll put that into parameters tha
 
 ```{r}
 MyDir <- "GIS-ROI-V2"
-StudyYear  <- 2023
+StudyYear  <- 2020
 ```
 
 > The year under study is  **`r StudyYear `**
@@ -110,12 +110,33 @@ plot(img)
 
 The Region of Interest or **ROIs** are also called  "*ground truth*"  areas where we *know* or *observed*  the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
 
-> **TODO:** See Blanca's message for explanation on the construction of the ROIs
+> See componenet 1 (Blanca) for more explanation on the construction of the ROIs
 
 ```{r, cache = TRUE}
 # Importing ROIs (Shapefiles)
 
 shp <- read_sf(paste0("Data/",MyDir,"/ROI",StudyYear,"/"))
+```
+
+One can check the classes tat have beeen defined in the shapefile and their labels. 
+
+```{r, cache=TRUE}
+# table of classes, as defined in the shp file
+
+ClassesRaw <- as.data.frame(shp) %>%
+  group_by(MC_ID, MC_name) %>%
+  count() %>%
+  arrange(desc(n))
+  
+kable(ClassesRaw)
+# Class 3 does not exist! And cloud is NA!
+```
+
+Here, we have `r nrow(ClassesRaw)` classes but some may have wrong labels or simply ot existing. 
+
+```{r}
+shp <-shp %>%
+  mutate(MC_name = ifelse(MC_ID ==12, "Cloud", MC_name))
 ```
 
 
@@ -129,32 +150,20 @@ names(img) <- c("4_red", "3_green", "2_blue", "8_nir", "11_swir16", "y_ndvi", "y
 We can now match the information from the ground truth, with what is available from the images (raster). This operation, that uses the exact location and a perfect geographical alignment, will provide a sample with both the information of the nature of the land (in classes)and the information from the  satellite (predictors). 
  
 ```{r, cache=TRUE}
+# Matching the ROIs with the stack of images (bands) to create a data frame
 DataForModel <- terra::extract(img, shp, df = TRUE)
+```
 
-# Checks
-unique(shp$MC_name)
-# Class 3 does not exist! 
 
-totto <- shp %>%
-  select("MC_ID", "MC_name") %>%
-   distinct() %>%
-  arrange(MC_ID, MC_name)
-  
-  
+```{r, cache=TRUE}
 # Assigning class for each location 
 DataForModel$class <- as.factor(shp$MC_ID[match(DataForModel$ID, seq(nrow(shp)))])
 
-# We need a numeric variable as well 
-DataForModel <- DataForModel %>%
-   mutate(classnum = as.numeric(class))
-
-##  Keeping the number of classes
-NbClass <- length(unique(DataForModel$class))
-NbClass
+DataForModel$class <- factor(DataForModel$class)
 
 ```
 
->**TODO** We can label the `r NbClass` land classes for a better interpretation and visualization
+>It can be useful to label the `r length(unique(DataForModel$class))` land classes for a better interpretation and visualization. This can be a  bit tricky if one value (and one label ) is not observed. 
 
 
 ```{r include=FALSE}
@@ -178,7 +187,6 @@ class_labels <- c(
 )
 
 # Searching for a solution to the class labels since #3 originally does not exist!
-
 class_labels_12 <- c(
 "1" = "Dense_Forest",
 "2" = "Open_Forest",
@@ -195,10 +203,9 @@ class_labels_12 <- c(
 )
 
 # We affect labels as defined by class_labels with 12 levels sequentially, to the variable class
-# DataForModel$class <- factor(DataForModel$class, levels = names(class_labels_12), labels = class_labels_12)
-# levels(DataForModel$class) <- class_labels_12
-
-DataForModel$class <- factor(DataForModel$class)
+# For Whatever reason (still not found), this does not work!!
+# DataForModel$class <- factor(DataForModel$class, labels = class_labels)
+# levels(DataForModel$class) <- class_labels
 
 ```
 
@@ -236,7 +243,7 @@ DataForModel %>%
   ggtitle("Land Types")
 ```
 
-> **TODO** : Review this : There is a  **class imbalance** in the explanatory variable `class`, with classes  *pasture land/ Grassland*  and *Other vegetation* being more numerous than other classes. We need to keep in mind as this may affect the machine Learning model.  
+> There is a  **class imbalance** in the explanatory variable `class`, with classes  *Forest (open or dense)*  and *Other vegetation* being more numerous than other classes. We need to **keep this in mind** as this may affect the machine Learning model.  
 
 
 
@@ -252,7 +259,8 @@ predictor_vars <- DataForModel %>%
 predictor_vars
 
 ```
-In total with have **`r length(predictor_vars)`** predictors. 
+
+>In total with have **`r length(predictor_vars)`** predictors. 
 
 ```{r, results=TRUE, echo=TRUE}
 datasummary_skim(select(DataForModel, predictor_vars) ,   type = "numeric",
@@ -408,14 +416,8 @@ setSeeds <- function(method = "cv", numbers = 1, repeats = 1, tunes = NULL, seed
   # return seeds
   seeds
 }
-
 ```
 
-```{r echo=FALSE}
-# Summary function with six statistics of interest 
-# sixStats <- function(...) c(twoClassSummary(...), 
-#                             defaultSummary(...))
-```
 
 By default, repeated K-fold cross-validation is used here. The function `r `trainControl` can be used to specify the type of resampling. We use here K= 5 and 10 repetition of the process. We then estimate 5 x 10 = 50 different predictions.
 
@@ -444,6 +446,7 @@ Our final output will be based on the **majority vote** of the individual decisi
 
 ```{r, include = FALSE}
 # Repeated cross validation
+## Seting the seed for each repetition using function previously defined
 rcvSeeds <- setSeeds(method = "repeatedcv", 
                       numbers = K,
                       repeats = Myrepeats, 
@@ -451,7 +454,8 @@ rcvSeeds <- setSeeds(method = "repeatedcv",
                       seed = Myseed)
 
 
-# Configure the trainControl argument for cross-validation
+# Setting up K-fold cross-validation with reproducible seeds,
+# allowing parallel computation, and saving predictions 
 K5_CV_seed <- trainControl(method = "cv", 
                            number = K,
                            classProbs = FALSE, 
@@ -519,7 +523,7 @@ rf_fit <- train(formula,
 ```{r, results=TRUE}
 rf_fit
 
-# Best number of trees
+# Sececting the "Best" number of trees
 mtry_best <- rf_fit$bestTune[[1]]
 ```
 The results, in terms of accuracy (or *Kappa*) can be visualized to identify the best value for the number of regressors per  `mtry` leading to the highest accuracy.  
@@ -638,8 +642,7 @@ Based on what we have discovered, it seems that selecting a Random Forest model 
 
 ```{r, cache = TRUE}
 # Uses the optimal mtry from the previous model
-
-grid <- expand.grid(.mtry=  mtry_best)
+grid <- expand.grid(.mtry=  mtry_best) # <- this is the way to impose mtry
 ntree = ntree_best
 
 #Train a model  with fixed mtry and ntree parameters, other parameters are as previously defined 
@@ -720,10 +723,8 @@ rf_CM <- confusionMatrix(rf_pred_Valid, validation_data$class)
 ```
 
 ```{r}
-
 # Out-of-sample accuracy
 outsample_accuracy <- round(100*rf_CM$overall[1], 2)
-
 
 ```
 
@@ -806,60 +807,6 @@ ggplot()+
 
 ```
 
-## Testing another model: Multinomial Logistic model (MNL)
-
-As for the random forest model, we fist train our model on the `train_data` subsample. We only have to change the `method` in the code and in `train()`function to **multinom** (multinomial logit). 
-
-
-```{r, cache = FALSE}
-# Train your model using the training data set
-logi_fit <- train(formula,
-                data = train_data,
-                method = "multinom", 
-                trControl = K5_CV_seed,
-                trace = FALSE)
-logi_fit
-            
-```
-
-### The *in sample* performance is:
-
-```{r, results=TRUE}
-logi_pred <- predict(logi_fit, train_data)
-
-# Confusion, matrix
-confusionMatrix(logi_pred, train_data$class)
-```
-
-We need now further investigation to see if the model generalizes well or if it just has learned from the training data. 
-
-### Variable importance
-
-
-```{r}
-LogiVarImportance<- varImp(logi_fit, scale = FALSE)
-plot(LogiVarImportance)
-```
-
-> Interestingly, the logistic model does not exhibit the same "*important*" variables. 
-
-### The *Out of sample* performance 
-
-```{r, results=TRUE}
-logi_pred_Valid <- predict(logi_fit, validation_data)
-logi_CM <- confusionMatrix(logi_pred_Valid, validation_data$class)
-logi_CM$table
-
-
-```
-
-The acuracy of the' logistic is:
-
-```{r}
-logi_CM$overall[c(1,2)]
-```
-
-
 # Adressing the imbalance problem
 
 ## Using Kappa instead on accuracy 
@@ -887,7 +834,7 @@ The idea is always to resample to have a more balance sample with almost the sam
 
 
 ### Up and down sampling 
-Both up-sampling and down-sampling are techniques that change the distribution of the classes by removing or duplicating observations.To do that, one randomly duplicate observations or remove some 
+Both up-sampling and down-sampling are techniques that change the distribution of the classes by removing or duplicating observations. To do that, one randomly duplicate observations or remove some 
 
 - **Up**: increase the number of instances in the minority class (less frequent class) by randomly **duplicating** observations from the minority class or by generating synthetic examples using techniques like SMOTE (see below).
 
@@ -898,13 +845,6 @@ Both up-sampling and down-sampling are techniques that change the distribution o
 
 ```{r}
 # Remember the set of parameters we were using 
-K5_CV_seed <- trainControl(method = "cv", 
-                           number = K,
-                           classProbs = FALSE, 
-                           savePredictions = TRUE,
-                           seeds = rcvSeeds,
-                           allowParallel = TRUE)
-
 # We just need to change one parameter there
 K5_CV_seed_up <- trainControl(method = "cv", 
                            number = K,
@@ -954,6 +894,8 @@ rf_fit_down
 In that technique, one create a new training sample from the original one.
 SMOTE works by generating new **synthetic** examples that are close in the feature space (some twins). For each minority class example selected, SMOTE finds its k-nearest neighbors in the feature space (typically Euclidean distance is used). It then creates new examples by choosing one of the k-nearest neighbors randomly and using it to create a new synthetic instance at a randomly selected point between the chosen neighbor and the original example. By increasing the number of minority class samples, SMOTE helps to balance the class distribution and improve the performance of machine learning models in predicting the minority class. 
 
+> SMOTE changes the training data set, we will have a much larger data set for training our model. It means it is likely that the model overperforms in-sample and over-fits! 
+
  
 ```{r}
 library(smotefamily)
@@ -966,12 +908,14 @@ smote_data <- SMOTE(train_sub, train_data$class, K = 5, dup_size = 0)
 train_data_smote <- as.data.frame(smote_data$data)
 train_data_smote$class <- as.factor(train_data_smote$class)
 
+# Here we use the same parameters as for our RF model
+# Should also try with different parameters
 rf_fit_smote <- train(formula,
                 data =  train_data_smote,
                 method = "rf",
-                ntree = 100,
+                ntree = ntree_best,  # Selecting the same as for initial RF
                 metric= "Kappa",
-                trControl = K5_CV_seed_down)
+                trControl = K5_CV_seed)
 
 rf_fit_smote
 ```
@@ -987,32 +931,34 @@ It is important to compare models base on one of the "metrics" available. In our
 
 ```{r modelsperf}
 models <- list( RF =rf_fit, 
-                Logit = logi_fit, 
                 RF_up = rf_fit_up,
                 RF_down = rf_fit_down, 
                 RF_Smote =  rf_fit_smote)
                 
 perf <- resamples(models)
 
-colvec <- c('#fbb4ae','#b3cde3','#ccebc5','#decbe4','#fed9a6','#ffffcc')
+colvec <- c('#fbb4ae','#ccebc5','#decbe4','#fed9a6','#ffffcc')
+```
 
-# Compiling Accuracy
-boxplot(perf$values[c("RF~Accuracy", "Logit~Accuracy", 
+
+```{r modelsperf}
+
+# Comparing models based on Accuracy
+boxplot(perf$values[c("RF~Accuracy",  
                       "RF_up~Accuracy", "RF_down~Accuracy", "RF_Smote~Accuracy")],
         names = names(models), col=colvec,
-        main = "Accuracy",
+        main = "Accuracy (in-sample)",
         sub = "Accuracy on CV sets, all models (training set)", 
         frame.plot = FALSE)
 ```
 
-### Comparing Kappa - InSample
 
-```{r modelskappa}
-# Compiling Kappa
-boxplot(perf$values[c("RF~Kappa", "Logit~Kappa", 
+```{r modelsperf}
+# Comparing models based on Kappa
+boxplot(perf$values[c("RF~Kappa", 
                       "RF_up~Kappa", "RF_down~Kappa", "RF_Smote~Kappa")],
         names = names(models), col=colvec,
-        main= "Kappa",
+        main= "Kappa (in-sample)",
         sub = "Kappa on CV sets, all models (training set)", 
         frame.plot = FALSE)
 
@@ -1021,16 +967,42 @@ boxplot(perf$values[c("RF~Kappa", "Logit~Kappa",
 
 > Depending on the criterion choosed and on the objective of the prediction, on may prefer one model to another. 
 
-### Comparing bases on accuracy- Out-of-sample 
+## Comparing predictions on the validation set: Out-of-sample 
 
-> **TODO**
 
 ```{r}
-logi_pred_Valid <- predict(logi_fit, validation_data)
-logi_CM <- confusionMatrix(logi_pred_Valid, validation_data$class)
-
+smote_pred_Valid <- predict(rf_fit_smote, validation_data)
+smote_CM <- confusionMatrix(smote_pred_Valid, validation_data$class)
 
 ```
+
+
+```{r}
+# Out-of-sample accuracy
+smote_outsample_accuracy <- round(100*smote_CM$overall[1], 2)
+
+```
+
+On the *validation set*, with `r nrow(validation_data)` points, we have an accuracy of **`r outsample_accuracy`** \%. 
+
+```{r}
+# SMOTE CM
+# Convert the confusion matrix to a data frame
+smote_cm_df <- as.data.frame(smote_CM$table)
+# Plot with reversed Y-axis and added total column
+smote_cm_df %>%
+  ggplot(aes(x = Reference, y = fct_rev(Prediction), fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 5) +
+  scale_fill_gradient(low = "white", high = "orange") +
+  labs(title = paste("SMOTE RF - Out-of-Sample confusion Matrix (global accuracy =",smote_outsample_accuracy, "%)"), 
+       subtitle = paste("SMOTE RF Model used to predict on validation set (N=",nrow(validation_data), ")"),
+       x = "Predicted", y = "Actual") +
+  theme_minimal()+
+  theme (legend.position ="none")
+```
+
+
 
 
 
