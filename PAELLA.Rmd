@@ -85,7 +85,9 @@ StudyYear  <- 2023
 
 > The year under study is  **`r StudyYear `**
 
-We will import and export files in different format, including GIS specific files in formats that can be *raster* (images) or *shapefiles* (vectors). Also, we will eed to combine, assemble and transform these files to use them as data frames for the Machine Learning model.  
+We will import and export files in different format, including GIS specific files in formats that can be *raster* (images) or *shapefiles* (vectors). Also, we will need to combine, assemble and transform these files to use them as data frames for the Machine Learning model.  
+
+> Important, when changing year: Clear the cache (remove files on the hard disk). 
 
 ## Importing geospatial information
 
