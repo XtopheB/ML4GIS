@@ -1,6 +1,6 @@
 ---
 title: "A Pipeline for Agile Estimation of Land Accounts (PAELA)"
-subtitle: "Component 2 - V1.2"
+subtitle: "Component 2 - V2.1"
 author: "Christophe Bontemps (SIAP) - Blanca Perez Lapena (ESCAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -33,9 +33,10 @@ The **third** component will then use this model (second component) to estimate 
 
 # Training the machine Learning Model 
 
-### Packages needed for traininga Machine learning model
+### Packages needed for training a Machine learning model
 
-As usual when working with specific data, We need both generic and specific packages. We have 3 broad categories: 
+As usual when working with specific data, We need both generic and specific packages. We have 3 broad categories:
+
 - Packages specific to GIS and maps such as  `sf` and `raster`
 - Packages specific to Data Science and Machine Learning, in particular the package `CARET` that embeds many models and post-estimation features and graphics
 - Generic packages for data management, visualization and dissemination such as `dplyr` and  `ggplot2`.   
@@ -80,7 +81,7 @@ Firstly, we must define the year under study. We'll put that into parameters tha
 
 ```{r}
 MyDir <- "GIS-ROI-V2"
-StudyYear  <- 2023
+StudyYear  <- 2020
 ```
 
 > The year under study is  **`r StudyYear `**
@@ -109,7 +110,7 @@ These are images taken with different bands and reflecting the nature of waves c
 plot(img)
 ```
 
-##  b.  ROIs or "ground truth land classes" (shapefiles)
+##  b.  *ROIs* or "*ground truth*" land classes (shapefiles)
 
 The Region of Interest or **ROIs** are also called  "*ground truth*"  areas where we *know* or *observed*  the nature of the the land and its class. This is a limited sample and this sample is important for training our model and for validating the model trained and compute its accuracy on a validation sub sample. So that sample will define the set of points where the information is available. Here  it comes directly from QGIS as a shapefile (*.shp*).
 
@@ -148,7 +149,7 @@ shp <-shp %>%
 names(img) <- c("4_red", "3_green", "2_blue", "8_nir", "11_swir16", "y_ndvi", "y_mndwi", "y_savi", "y_bsi", "y_vcp", "dry_ndvi", "dry_mndwi","dry_bsi","wet_ndvi","wet_mndwi","wet_bsi")
 ```
 
-## c. Matching the information from Raster (bands) with class values on the ground 
+## c. Matching class values (ROIs) with the information from Raster (bands)
 
 We can now match the information from the ground truth, with what is available from the images (raster). This operation, that uses the exact location and a perfect geographical alignment, will provide a sample with both the information of the nature of the land (in classes)and the information from the  satellite (predictors). 
  
@@ -481,7 +482,10 @@ For more flexibility, we use that second option here:
 formula <- as.formula(paste("class ~", paste(predictor_vars, collapse = " + ")))
 ```
 
-> Our `formula` with  `r `length(predictor_vars)` is:   `r paste("class ~", paste(predictor_vars, collapse = " + "))`  
+> Our `formula` with  `r length(predictor_vars)` is:
+>
+> `r paste("class ~", paste(predictor_vars, collapse = " + "))`  
+>
 
 And we can train our model: 
 
@@ -817,6 +821,7 @@ comparison_long <- comparison %>%
 comparison_summary <- comparison_long %>%
   group_by(Category, Type) %>%
   count(name = "Count")
+
 
 # Bar chart with overlays
 
