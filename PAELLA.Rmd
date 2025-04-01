@@ -482,7 +482,7 @@ For more flexibility, we use that second option here:
 formula <- as.formula(paste("class ~", paste(predictor_vars, collapse = " + ")))
 ```
 
-> Our `formula` with  `r length(predictor_vars)` is:
+> Our `formula` with  **`r length(predictor_vars)` predictors** ( or explanatory variables, "*bands* here) is:
 >
 > `r paste("class ~", paste(predictor_vars, collapse = " + "))`  
 >
@@ -824,23 +824,22 @@ comparison_summary <- comparison_long %>%
 
 
 # Bar chart with overlays
-
 comparison_summary %>%
-mutate(Category = fct_infreq(Category) %>% fct_rev()) %>%  # Reorder and reverse factor levels
+mutate(Category = fct_infreq(Category) %>% fct_rev()) %>% # Reorder and reverse factor levels
 ggplot()+
   aes(x = Count , y = Category, fill = Type) +
-  geom_bar(stat = "identity", position = "identity", width = 0.5, alpha = 0.5) +
+  geom_bar(stat = "identity", position = "identity", width = 0.5, alpha = 0.2) +
   scale_fill_manual(values = c("Prediction" = SIAP.color, "Actual" = SIAP.red)) +
   labs(
     title = paste("Observations vs Predictions (",outsample_accuracy, "% on the validation sample)"),
-    subtitle = "Red means underpredicting the current category \n Blue means overpredicting that category",
+    subtitle = " Red means underpredicting the current category \n Blue means overpredicting that category",
     caption = paste("Grey = Correct prediction, Red = Observed (not predicted), 
-                    Blue = Predicted (not observed)\n N=", nrow(validation_data)), 
+                    Blue = Predicted (not observed)\n N=", nrow(validation_data), ", Year =", StudyYear), 
     y = "Land type",
     x = "Count",
     fill = "Type"
   ) +
-  theme_minimal()+
+  theme_minimal() +
   theme(legend.position = "none")
 
 ```
@@ -864,12 +863,11 @@ $$ \kappa = \frac{2(TP \cdot TN - FN \cdot FP)}{(TP + FP) \cdot (FP + TN)+ (TP+F
 
 There are several methods for handling imbalanced classes in a multivariate (multi-class) classification problem. Using the `caret` package, we can use several resampling techniques:
 
-- up-sampling, down-sampling,
-- SMOTE, and
-- ROSE
+- up-sampling, 
+- down-sampling, and
+- SMOTE
 
 The idea is always to resample to have a more balance sample with almost the same number of observation in each class and avoid over-predicting the dominant class. We can combine this with the choice of Kappa as the metric to select the "best" model. 
-
 
 ### Up and down sampling 
 Both up-sampling and down-sampling are techniques that change the distribution of the classes by removing or duplicating observations. To do that, one randomly duplicate observations or remove some 
@@ -929,7 +927,7 @@ rf_fit_down
 In that technique, one create a new training sample from the original one.
 SMOTE works by generating new **synthetic** examples that are close in the feature space (some twins). For each minority class example selected, SMOTE finds its k-nearest neighbors in the feature space (typically Euclidean distance is used). It then creates new examples by choosing one of the k-nearest neighbors randomly and using it to create a new synthetic instance at a randomly selected point between the chosen neighbor and the original example. By increasing the number of minority class samples, SMOTE helps to balance the class distribution and improve the performance of machine learning models in predicting the minority class. 
 
-> SMOTE changes the training data set, we will have a much larger data set for training our model. It means it is likely that the model overperforms in-sample and over-fits! 
+> SMOTE changes the training data set, we will have a **much larger** data set for training our model. It means it is likely that the model overperforms when assessing its performance *in-sample*! We have to be cautious in interpreting *in-sample* accuracies as the models use very different data sets.
 
  
 ```{r}
@@ -957,14 +955,14 @@ rf_fit_smote
  
 ##  Comparing all models
 
-All these models use different parameters and have specific advantages and drawbacks. We may still want to compare their **predictive performances** on the various measures of fit. For that we will plot the distribution of the values of these indicators on all the validation samples, for each model.
+All these models use different parameters and have specific advantages and drawbacks. We may still want to compare their **predictive performances** on the various measures of fit. For that we will plot the distribution of the values of these indicators on all the validation samples, for each model.^[By design models use different data sets and as such should not really be compared *in-sample*. For example, "*down-sampling*"  decreases the number of instances in the majority class, and so removes observations, while "*up-sampling*" duplicates the observations in the minority classes and mechanically increases the sample size.]  
 
 ### Comparing bases on accuracy- In Sample
 
 It is important to compare models base on one of the "metrics" available. In our case, we will focus on "Accuracy" or "Kappa" as these are the most relevant. But one may as well be focusing on one particular class specificity if there is one class that one wish to predict well.  
 
 ```{r }
-models <- list( RF =rf_fit, 
+models <- list( RF =rf_final_fit, 
                 RF_up = rf_fit_up,
                 RF_down = rf_fit_down, 
                 RF_Smote =  rf_fit_smote)
@@ -976,7 +974,7 @@ colvec <- c('#fbb4ae','#ccebc5','#decbe4','#fed9a6','#ffffcc')
 
 
 ```{r }
-
+par(mfrow = c(1, 2))
 # Comparing models based on Accuracy
 boxplot(perf$values[c("RF~Accuracy",  
                       "RF_up~Accuracy", "RF_down~Accuracy", "RF_Smote~Accuracy")],
@@ -984,10 +982,7 @@ boxplot(perf$values[c("RF~Accuracy",
         main = "Accuracy (in-sample)",
         sub = "Accuracy on CV sets, all models (training set)", 
         frame.plot = FALSE)
-```
 
-
-```{r }
 # Comparing models based on Kappa
 boxplot(perf$values[c("RF~Kappa", 
                       "RF_up~Kappa", "RF_down~Kappa", "RF_Smote~Kappa")],
@@ -998,6 +993,7 @@ boxplot(perf$values[c("RF~Kappa",
 
 
 ```
+
 
 > Depending on the criterion choosed and on the objective of the prediction, on may prefer one model to another. 
 
@@ -1036,6 +1032,53 @@ smote_cm_df %>%
   theme (legend.position ="none")
 ```
 
+```{r}
+# A complex to construct, but easy to read, graphic on prediction per category!
+# Combine predictions and actual values
+
+comparisonSMOTE <- data.frame(
+  Class = validation_data$class, 
+  Prediction = smote_pred_Valid,
+  Actual = validation_data$class
+  )
+ 
+# Reshape the data into a long format
+comparisonSMOTE_long <- comparisonSMOTE %>%
+  pivot_longer(
+    cols = c(Actual, Prediction),         # Only include these columns
+    names_to = "Type",                    # Column to distinguish "Actual" and "Prediction"
+    values_to = "Category"                # Values are the category labels
+  )
+
+# Count occurrences of each category by Type
+comparisonSMOTE_summary <- comparisonSMOTE_long %>%
+  group_by(Category, Type) %>%
+  count(name = "Count")
+
+
+# Bar chart with overlays
+comparisonSMOTE_summary %>%
+mutate(Category = fct_infreq(Category) %>% fct_rev()) %>% # Reorder and reverse factor levels
+ggplot()+
+  aes(x = Count , y = Category, fill = Type) +
+  geom_bar(stat = "identity", position = "identity", width = 0.5, alpha = 0.2) +
+  scale_fill_manual(values = c("Prediction" = SIAP.color, "Actual" = SIAP.red)) +
+  labs(
+    title = paste("SMOTE: Observations vs Predictions (",smote_outsample_accuracy, "% on the validation sample)"),
+    subtitle = " Red means underpredicting the current category \n Blue means overpredicting that category",
+    caption = paste("Grey = Correct prediction, Red = Observed (not predicted), 
+                    Blue = Predicted (not observed)\n N=", nrow(validation_data), ", Year =", StudyYear), 
+    y = "Land type",
+    x = "Count",
+    fill = "Type"
+  ) +
+  theme_minimal()+
+  theme(legend.position = "none")
+
+```
+
+
+
 # Predictions on the whole area
 
 We now take the whole image and predict on **all observations = all pixels** using the model that we estimated. 
@@ -1048,7 +1091,7 @@ While doing the prediction on the whole area (each pixel of the raster on the RO
 dir.create(paste0("Data/",MyDir,"/Predictions_with_R",StudyYear), showWarnings = FALSE)
 
 #  Export prediction with Random Forest model as TIFF
-rf_result <- raster::predict(img,  rf_fit, na.rm =TRUE,
+rf_result <- raster::predict(img, rf_final_fit, na.rm =TRUE,
                   filename = paste0("Data/",MyDir,"/Predictions_with_R",StudyYear,"/classification_fromRF.tif"),
                   overwrite = TRUE
                   )
