@@ -22,14 +22,16 @@ knitr::opts_chunk$set( message = FALSE, warning = FALSE, results =FALSE, echo = 
 
 
 # Foreword
- This is the second component of the **P**ipeline for **A**gile **E**stimation of **L**and **A**ccounts (PAELA project). The **first component** aims at acquiring two different information:
- 
- - Satellite information that will inform on some features of the nature of the soil as seen from space through several sensors and lenses 
- - Curated information for several Regions of Interest (ROIs) with different land cover classes that will serve as "*ground truth*" references for a Machine Learning model to learn how to relate satellite images (pixels) with on the ground classification.
- 
-This **second** component will use the first component (data) as input to train a Machine Learning model designed and optimized to be  used by the third component to estimate land cover at various scales, locations and dates. This second component will provide a ready-to-use, fully trained model for classification of land types. It follows agile programming framework with separated and individual chunks fully adjustable and reproducible.   
+This is the second component of the **P**ipeline for **A**gile **E**stimation of **L**and **A**ccounts (PAELA project). The first component aims at acquiring two types of information:
 
-The **third** component will then use this model (second component) to estimate several land cover maps and integrate these maps into a framework for computing and verifying the transition btween years needed for Land Accounting. 
+- Satellite information for a specified year covering the study area.
+- Regions of Interest (ROIs) with different land cover classes that will serve as “ground truth” references for a Machine Learning model to learn how to relate satellite pixels with on the ground classifications.
+
+This **second** component will use the ROIs from the first component and a newly created stacked image (individual bands and spectral indices) as inputs to train a Machine Learning model. This component will provide a ready-to-use, fully trained model for classifying land types. It follows an agile programming framework structured in separate, individual chunks fully adjustable and reproducible. Also, this component will apply the trained model to estimate land cover types for the entire study area using the stacked image.
+
+The **third** component will then refine the land cover maps (from the second component), including an analysis of improbable land cover transitions over the accounting period, for Land Account compilation in the **fourth** component.
+
+
 
 # Training the machine Learning Model 
 
@@ -81,7 +83,7 @@ Firstly, we must define the year under study. We'll put that into parameters tha
 
 ```{r}
 MyDir <- "GIS-ROI-V2"
-StudyYear  <- 2020
+StudyYear  <- 2023
 ```
 
 > The year under study is  **`r StudyYear `**
