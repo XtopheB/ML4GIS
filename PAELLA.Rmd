@@ -4,6 +4,7 @@ subtitle: "Component 2 - V2.2"
 author: "Christophe Bontemps (SIAP) - Blanca Perez Lapena (ESCAP)"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
+  pdf_document: default
   html_document:
     code_folding: show
     toc: yes
@@ -11,7 +12,6 @@ output:
     highlight: tango
     number_sections: no
     theme: lumen
-  pdf_document: default
   word_document: default
 always_allow_html: true
 ---
